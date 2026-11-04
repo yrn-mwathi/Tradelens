@@ -48,6 +48,9 @@ export function launchWorkspace(db){
  '<h3>Recorded scenarios</h3><div class="grid">'+scenarios.map(s=>{
  const costs=s.supplier+s.shipping+s.advertising+s.fees+s.duties+s.refunds;
  const profit=s.selling-costs;const margin=(profit/s.selling*100).toFixed(1);
+ const quote=db.prepare(`SELECT e.* FROM supplier_shipping_evidence e JOIN catalog_mappings m ON m.candidate_id=e.candidate_id WHERE e.candidate_id=? AND e.destination=? AND e.provider=m.provider AND e.supplier_sku=m.sku ORDER BY e.verified_at DESC LIMIT 1`).get(s.candidate_id,s.destination);
+ const fresh=quote&&Date.now()-Date.parse(quote.verified_at)<=7*86400000;
+ const quotedProfit=fresh?profit+s.shipping-quote.shipping_cents:null;
  return '<article><h3>'+esc(s.name)+' · '+esc(s.destination)+'</h3><p>Price: '+esc(currency[s.destination])+' '+money(s.selling)+' · Total estimated costs: '+money(costs)+'</p><strong>Estimated contribution: '+esc(currency[s.destination])+' '+money(profit)+' ('+margin+'%)</strong><p>Assumptions: '+esc(s.assumptions)+'</p><a href="'+esc(s.source_url)+'" target="_blank" rel="noopener noreferrer">Source evidence</a><p>Updated '+esc(s.updated_at.slice(0,10))+'</p></article>';
  }).join('')+'</div></section>';
 }
