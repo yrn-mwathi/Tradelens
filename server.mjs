@@ -1,3 +1,4 @@
+import { initializeLaunch, saveLaunchScenario, launchWorkspace } from './launch.mjs';
 import { initializeEvidence, recordEvidence, evidenceWorkspace } from './evidence.mjs';
 import { renderCommerce } from './commerce.mjs';
 import { createServer } from 'node:http';
@@ -19,6 +20,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS candidates (
 )`);
 
 initializeEvidence(db);
+initializeLaunch(db);
 
 const fields = {
   revenue: 'Net selling price (excluding collected tax)',
@@ -444,7 +446,7 @@ function listingControls(row, listing) {
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
 }
 
-const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence' };
+const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International' };
 
 function page(path) {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
@@ -516,6 +518,7 @@ function page(path) {
     <p>${shop ? 'Manage approved products and Shopify handoff.' : 'Set SHOPIFY_SHOP to enable storefront listing controls.'}</p>
     ${cards || '<p>Approve a candidate in Scout to bring it into the catalog.</p>'}</section>` : ''}
     ${path === '/admin/evidence' ? evidenceWorkspace(db) : ''}
+    ${path === '/admin/launch' ? launchWorkspace(db) : ''}
     ${path === '/admin/supply' ? `${operations(rows)}
     <section><h2>Shopify paid orders</h2>
     <p>Recent paid-order notifications. Fulfillment assignment is a separate step.</p>
@@ -568,7 +571,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page(request.url));
     }
-    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -609,8 +612,9 @@ createServer(async (request, response) => {
     else if (request.url === '/store/listing') updateListing(form);
     else if (request.url.startsWith('/scout/')) recordScout(request.url, form);
     else if (request.url.startsWith('/research/')) recordEvidence(db, request.url, form);
+    else if (request.url === '/launch/scenario') saveLaunchScenario(db, form);
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
-    const destination = request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
+    const destination = request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
       : ['/leads', '/catalog', '/orders', '/tracking'].includes(request.url) ? '/admin/supply' : '/admin';
     response.writeHead(303, { Location: destination });
     response.end();
