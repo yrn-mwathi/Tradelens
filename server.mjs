@@ -159,8 +159,13 @@ async function receivePaidOrder(request, response) {
     const quantity = line.quantity;
     if (!/^[1-9]\\d*$/.test(lineId) || !/^[1-9]\\d*$/.test(variantId) ||
         !Number.isSafeInteger(quantity) || quantity < 1) return null;
-    return [shop,order.admin_graphql_api_id,lineId,variantId,quantity];
+    return [shop,order.admin_graphql_api_id,lineId,'gid://shopify/ProductVariant/'+variantId,quantity];
   }).filter(Boolean);
+  // Reject malformed line items instead of silently marking an incomplete order as paid.
+  if (lines.length !== order.line_items.length) {
+    response.statusCode = 400;
+    return response.end();
+  }
   db.exec('BEGIN');
   try {
     db.prepare('INSERT OR IGNORE INTO shopify_paid_orders VALUES (?,?,?)')
