@@ -236,8 +236,79 @@ function saveOperation(path, form) {
   }
 }
 
+const markets = { US: 'USD', UK: 'GBP', KE: 'KES', NG: 'NGN' };
+const factors = { demand: 30, supplier: 20, competition: 15, growth: 10 };
+const validations = ['Market Validated', 'Supplier Validated', 'Physically Tested'];
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scout_assessments (
+    candidate_id TEXT PRIMARY KEY REFERENCES candidates(id), demand INTEGER NOT NULL,
+    supplier INTEGER NOT NULL, competition INTEGER NOT NULL, growth INTEGER NOT NULL,
+    evidence TEXT NOT NULL, recorded TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS scout_validations (
+    candidate_id TEXT NOT NULL REFERENCES candidates(id), badge TEXT NOT NULL,
+    reviewer TEXT NOT NULL, evidence TEXT NOT NULL, recorded TEXT NOT NULL,
+    PRIMARY KEY(candidate_id, badge)
+  );
+`);
+
+function contribution(row) {
+  return row.revenue - row.supplier - row.shipping - row.duties - row.fees - row.acquisition - row.losses;
+}
+
+function recordScout(path, form) {
+  const id = required(form, 'id', 36);
+  if (!db.prepare('SELECT id FROM candidates WHERE id=?').get(id)) throw new Error('Candidate not found.');
+  const evidence = required(form, 'evidence', 1200);
+  const recorded = new Date().toISOString();
+  if (path === '/scout/validation') {
+    const badge = required(form, 'badge', 30);
+    if (!validations.includes(badge)) throw new Error('Choose a validation type.');
+    db.prepare(`INSERT INTO scout_validations VALUES (?,?,?,?,?)
+      ON CONFLICT(candidate_id,badge) DO UPDATE SET reviewer=excluded.reviewer,
+      evidence=excluded.evidence, recorded=excluded.recorded`)
+      .run(id, badge, required(form, 'reviewer', 120), evidence, recorded);
+    return;
+  }
+  const inputs = Object.keys(factors).map(key => count(form, key, 0));
+  if (inputs.some(value => value > 100)) throw new Error('Scores must be between 0 and 100.');
+  db.prepare(`INSERT INTO scout_assessments VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(candidate_id) DO UPDATE SET demand=excluded.demand, supplier=excluded.supplier,
+    competition=excluded.competition, growth=excluded.growth, evidence=excluded.evidence,
+    recorded=excluded.recorded`).run(id, ...inputs, evidence, recorded);
+}
+
+function scout(row, assessment, badges) {
+  return `<details><summary>Scout evidence and validation</summary>
+    ${assessment ? `<p>Analyst assessment · ${escape(assessment.recorded.slice(0,10))} · ${escape(assessment.evidence)}</p>` : ''}
+    <form method="post" action="/scout/assessment">
+    <input type="hidden" name="id" value="${row.id}"><div class="grid">
+    ${Object.keys(factors).map(key => `<label>${key} (0–100; higher is better)
+      <input name="${key}" type="number" min="0" max="100" value="${assessment?.[key] ?? ''}" required></label>`).join('')}
+    <label>Supporting observations and sources<textarea name="evidence" maxlength="1200" required>${escape(assessment?.evidence ?? '')}</textarea></label></div>
+    <button>Save analyst assessment</button></form>
+    <ul>${badges.map(badge => `<li>${escape(badge.badge)} · ${escape(badge.reviewer)} · ${escape(badge.recorded.slice(0,10))} · ${escape(badge.evidence)}</li>`).join('')}</ul>
+    <form method="post" action="/scout/validation"><input type="hidden" name="id" value="${row.id}">
+    <div class="grid"><label>Validation<select name="badge">${validations.map(value => `<option>${value}</option>`).join('')}</select></label>
+    <label>Reviewer or sample tester<input name="reviewer" maxlength="120" required></label>
+    <label>Evidence and results (include sample test date for physical testing)<textarea name="evidence" maxlength="1200" required></textarea></label></div>
+    <button>Confirm validation</button></form></details>`;
+}
+
 function page() {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
+  const assessments = new Map(db.prepare('SELECT * FROM scout_assessments').all()
+    .map(item => [item.candidate_id, item]));
+  const badges = db.prepare('SELECT * FROM scout_validations').all();
+  const ranked = rows.flatMap(row => {
+    const assessment = assessments.get(row.id);
+    const profit = contribution(row);
+    if (!assessment || profit <= 0 || Date.now() - Date.parse(assessment.recorded) > 30 * 86400000) return [];
+    const marginScore = Math.min(100, 250 * profit / row.revenue);
+    const score = (25 * marginScore + Object.entries(factors)
+      .reduce((sum, [key, weight]) => sum + assessment[key] * weight, 0)) / 100;
+    return [{row, score, profit}];
+  }).sort((a,b) => b.score - a.score);
   const drafts = new Map(db.prepare('SELECT * FROM shopify_drafts WHERE shop=?').all(shop || '')
     .map(draft => [draft.candidate_id, draft]));
   const paidOrders = db.prepare('SELECT * FROM shopify_paid_orders WHERE shop=? ORDER BY rowid DESC LIMIT 30').all(shop || '');
@@ -249,7 +320,7 @@ function page() {
       <input type="hidden" name="id" value="${row.id}"><button>Create Shopify draft</button></form>` : '';
     const breakEven = row.revenue - row.supplier - row.shipping - row.duties - row.fees - row.losses;
     const contribution = breakEven - row.acquisition;
-    const currency = row.market === 'US' ? 'USD' : 'GBP';
+    const currency = markets[row.market];
     const format = cents => new Intl.NumberFormat('en', { style:'currency', currency }).format(cents / 100);
     return `<article><small>${row.market} · ${escape(row.variant)} · Analyst estimate</small>
       <h3>${escape(row.name)}</h3><p>${escape(row.evidence)}</p>
@@ -258,6 +329,7 @@ function page() {
       <p>Break-even acquisition cost ${format(breakEven)}</p>
       ${row.approved ? '<strong>Approved for handoff</strong>' : `<form method="post" action="/approve"><input type="hidden" name="id" value="${row.id}"><button>Approve for handoff</button></form>`}
       ${shopify}
+      ${scout(row, assessments.get(row.id), badges.filter(badge => badge.candidate_id === row.id))}
     </article>`;
   }).join('');
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -269,14 +341,21 @@ function page() {
     input,select,textarea,button{font:inherit;border-radius:7px;padding:10px;border:1px solid #50627e}
     input,select,textarea{width:100%;background:#111b2c;color:#fff}button{background:#82e6d4;color:#102128;cursor:pointer;font-weight:700;margin-top:12px}
     </style><main><header><small>ACL SMART SOLUTIONS LTD</small><h1>TradeLens</h1><p>Product research and approval workspace</p></header>
-    <section><h2>Add candidate</h2><p>Use USD for US and GBP for UK. Enter per-order amounts and cite your supporting evidence.</p>
+    <section><h2>Add candidate</h2><p>Use USD for US, GBP for UK, KES for Kenya and NGN for Nigeria. Enter per-order amounts and cite your supporting evidence.</p>
     <form method="post" action="/candidates"><div class="grid">
     <label>Product<input name="name" required maxlength="120"></label>
     <label>Variant<input name="variant" required maxlength="120"></label>
-    <label>Market<select name="market"><option>US</option><option>UK</option></select></label>
+    <label>Market<select name="market"><option value="US">United States</option><option value="UK">United Kingdom</option><option value="KE">Kenya</option><option value="NG">Nigeria</option></select></label>
     <label>Source URL<input type="url" name="source" required></label>
     ${Object.entries(fields).map(([key,label]) => `<label>${label}<input name="${key}" inputmode="decimal" required></label>`).join('')}
     <label>Evidence notes<textarea name="evidence" required maxlength="1200"></textarea></label></div><button>Save candidate</button></form></section>
+    <section><h2>Scout shortlist</h2>
+    <p>Up to 20 candidates with positive estimated contribution and analyst evidence recorded within 30 days. Scores reflect analyst inputs and margin assumptions.</p>
+    ${ranked.length ? `<ol>${ranked.slice(0,20).map(({row,score,profit}) =>
+      `<li>${escape(row.name)} · ${escape(row.variant)} · ${row.market} · ${score.toFixed(1)}/100
+      · Estimated price ${(row.revenue / 100).toFixed(2)} ${markets[row.market]}
+      · Estimated contribution ${(profit / 100).toFixed(2)} ${markets[row.market]}
+      · <a href="${escape(row.source)}" rel="noreferrer">Evidence</a></li>`).join('')}</ol>` : '<p>No qualifying candidates.</p>'}</section>
     <h2>Candidates</h2>${cards || '<p>No candidates yet.</p>'}
     ${operations(rows)}
     <section><h2>Shopify paid orders</h2>
@@ -321,7 +400,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page());
     }
-    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -340,7 +419,7 @@ createServer(async (request, response) => {
       const market = required(form, 'market', 2);
       const source = new URL(required(form, 'source', 2048));
       if (!['http:', 'https:'].includes(source.protocol) || source.username || source.password) throw new Error('Use an HTTP or HTTPS evidence URL.');
-      if (!['US','UK'].includes(market)) throw new Error('Choose US or UK.');
+      if (!Object.hasOwn(markets, market)) throw new Error('Choose a supported market.');
       const amounts = Object.keys(fields).map(key => money(form.get(key)));
       if (amounts[0] <= 0) throw new Error('Revenue must be positive.');
       db.prepare(`INSERT INTO candidates
@@ -356,6 +435,7 @@ createServer(async (request, response) => {
       }
     }
     if (request.url === '/shopify/draft') await createDraft(required(form, 'id', 36));
+    else if (request.url.startsWith('/scout/')) recordScout(request.url, form);
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
     response.writeHead(303, { Location: '/' });
     response.end();
