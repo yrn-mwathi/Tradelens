@@ -1,3 +1,4 @@
+import { initializeSupplierCatalog, syncPrintifyCatalog, printifyCatalogWorkspace } from './printify-catalog.mjs';
 import { initializeSupplierHealth, checkSupplierConnection, supplierHealthWorkspace } from './supplier-health.mjs';
 import { initializeDispatch, previewSupplierDispatch, dispatchWorkspace } from './supplier-dispatch.mjs';
 import { initializeFulfillment, stageFulfillment, fulfillmentWorkspace } from './fulfillment.mjs';
@@ -29,6 +30,7 @@ initializeShopifyCatalog(db);
 initializeFulfillment(db);
 initializeDispatch(db);
 initializeSupplierHealth(db);
+initializeSupplierCatalog(db);
 
 const fields = {
   revenue: 'Net selling price (excluding collected tax)',
@@ -477,7 +479,7 @@ function listingControls(row, listing) {
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
 }
 
-const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International', '/admin/shopify': 'Shopify catalog', '/admin/fulfillment': 'Fulfillment', '/admin/dispatch': 'Dispatch previews', '/admin/suppliers': 'Supplier connections' };
+const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International', '/admin/shopify': 'Shopify catalog', '/admin/fulfillment': 'Fulfillment', '/admin/dispatch': 'Dispatch previews', '/admin/suppliers': 'Supplier connections', '/admin/printify': 'Printify catalog' };
 
 function page(path) {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
@@ -554,6 +556,7 @@ function page(path) {
     ${path === '/admin/fulfillment' ? fulfillmentWorkspace(db, shop) : ''}
     ${path === '/admin/dispatch' ? dispatchWorkspace(db, shop) : ''}
     ${path === '/admin/suppliers' ? supplierHealthWorkspace(db) : ''}
+    ${path === '/admin/printify' ? printifyCatalogWorkspace(db) : ''}
     ${path === '/admin/supply' ? `${operations(rows)}
     <section><h2>Shopify paid orders</h2>
     <p>Recent paid-order notifications. Fulfillment assignment is a separate step.</p>
@@ -606,7 +609,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page(request.url));
     }
-    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario','/shopify/catalog-sync','/fulfillment/stage','/dispatch/preview','/suppliers/check'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario','/shopify/catalog-sync','/fulfillment/stage','/dispatch/preview','/suppliers/check','/printify/sync'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -652,8 +655,9 @@ createServer(async (request, response) => {
     else if (request.url === '/fulfillment/stage') stageFulfillment(db,form,shop);
     else if (request.url === '/dispatch/preview') previewSupplierDispatch(db,form,shop);
     else if (request.url === '/suppliers/check') await checkSupplierConnection(db,form);
+    else if (request.url === '/printify/sync') await syncPrintifyCatalog(db,form);
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
-    const destination = request.url === '/suppliers/check' ? '/admin/suppliers' : request.url === '/dispatch/preview' ? '/admin/dispatch' : request.url === '/fulfillment/stage' ? '/admin/fulfillment' : request.url === '/shopify/catalog-sync' ? '/admin/shopify' : request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
+    const destination = request.url === '/printify/sync' ? '/admin/printify' : request.url === '/suppliers/check' ? '/admin/suppliers' : request.url === '/dispatch/preview' ? '/admin/dispatch' : request.url === '/fulfillment/stage' ? '/admin/fulfillment' : request.url === '/shopify/catalog-sync' ? '/admin/shopify' : request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
       : ['/leads', '/catalog', '/orders', '/tracking'].includes(request.url) ? '/admin/supply' : '/admin';
     response.writeHead(303, { Location: destination });
     response.end();
