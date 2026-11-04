@@ -4,7 +4,7 @@ TradeLens combines a public gadget storefront with an approval-led merchant work
 
 ## Preview in GitHub Codespaces
 
-1. Open the branch `feat/international-commerce-preview` in Codespaces.
+1. Open the `feat/unified-commerce-intelligence-launch` branch in Codespaces (or `main` after merge).
 2. Use Node.js **24 or later** (Node's built-in `node:sqlite` is required).
 3. Run:
 
@@ -12,7 +12,7 @@ TradeLens combines a public gadget storefront with an approval-led merchant work
 TRADELENS_DEMO=1 HOST=0.0.0.0 TRADELENS_PASSWORD='change-this-demo-password-to-a-long-random-value' node server.mjs
 ```
 
-4. Open forwarded port **3000** (keep the port private). The public storefront is `/`. Merchant pages are `/admin`, `/admin/engine` and `/admin/supply`.
+4. Open forwarded port **3000** (keep the port private). The public storefront is `/`. Merchant pages include `/admin`, `/admin/engine`, `/admin/supply`, `/admin/evidence` and `/admin/launch`.
 
 Preview mode uses **eight synthetic product concepts** with illustrative prices and vector artwork. It has working category navigation, keyword search, sort options, gift/work/travel discovery links and individual product detail pages. It does **not** accept payments or imply live supplier stock.
 
@@ -56,3 +56,7 @@ The existing merchant pages manage:
 ## Testing checklist
 
 Run `node --check commerce.mjs` and `node --check server.mjs` under Node 24+. Then verify `/health`, home, category, search, sort, gift finder, product detail and admin authentication. Do not expose the admin port publicly without a strong password and HTTPS.
+
+## Combined international launch work
+
+See [the unified release plan](docs/UNIFIED_LAUNCH.md). The International admin workspace now records source-linked landed-profit scenarios for US (USD) and UK (GBP), including shipping, advertising, fees, duties and refunds. These are **manual assumptions**, not live provider quotations or automatic tax calculations. The Shopify and supplier integration gates in the plan remain to be implemented and tested before launch.
