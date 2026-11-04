@@ -1,3 +1,4 @@
+import { initializeSupplierHealth, checkSupplierConnection, supplierHealthWorkspace } from './supplier-health.mjs';
 import { initializeDispatch, previewSupplierDispatch, dispatchWorkspace } from './supplier-dispatch.mjs';
 import { initializeFulfillment, stageFulfillment, fulfillmentWorkspace } from './fulfillment.mjs';
 import { initializeShopifyCatalog, syncShopifyCatalog, shopifyCatalogWorkspace } from './shopify-catalog.mjs';
@@ -27,6 +28,7 @@ initializeLaunch(db);
 initializeShopifyCatalog(db);
 initializeFulfillment(db);
 initializeDispatch(db);
+initializeSupplierHealth(db);
 
 const fields = {
   revenue: 'Net selling price (excluding collected tax)',
@@ -475,7 +477,7 @@ function listingControls(row, listing) {
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
 }
 
-const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International', '/admin/shopify': 'Shopify catalog', '/admin/fulfillment': 'Fulfillment', '/admin/dispatch': 'Dispatch previews' };
+const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International', '/admin/shopify': 'Shopify catalog', '/admin/fulfillment': 'Fulfillment', '/admin/dispatch': 'Dispatch previews', '/admin/suppliers': 'Supplier connections' };
 
 function page(path) {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
@@ -551,6 +553,7 @@ function page(path) {
     ${path === '/admin/shopify' ? shopifyCatalogWorkspace(db, shop, Boolean(shop && shopToken)) : ''}
     ${path === '/admin/fulfillment' ? fulfillmentWorkspace(db, shop) : ''}
     ${path === '/admin/dispatch' ? dispatchWorkspace(db, shop) : ''}
+    ${path === '/admin/suppliers' ? supplierHealthWorkspace(db) : ''}
     ${path === '/admin/supply' ? `${operations(rows)}
     <section><h2>Shopify paid orders</h2>
     <p>Recent paid-order notifications. Fulfillment assignment is a separate step.</p>
@@ -603,7 +606,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page(request.url));
     }
-    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario','/shopify/catalog-sync','/fulfillment/stage','/dispatch/preview'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario','/shopify/catalog-sync','/fulfillment/stage','/dispatch/preview','/suppliers/check'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -648,8 +651,9 @@ createServer(async (request, response) => {
     else if (request.url === '/shopify/catalog-sync') await syncShopifyCatalog(db,{shop,token:shopToken});
     else if (request.url === '/fulfillment/stage') stageFulfillment(db,form,shop);
     else if (request.url === '/dispatch/preview') previewSupplierDispatch(db,form,shop);
+    else if (request.url === '/suppliers/check') await checkSupplierConnection(db,form);
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
-    const destination = request.url === '/dispatch/preview' ? '/admin/dispatch' : request.url === '/fulfillment/stage' ? '/admin/fulfillment' : request.url === '/shopify/catalog-sync' ? '/admin/shopify' : request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
+    const destination = request.url === '/suppliers/check' ? '/admin/suppliers' : request.url === '/dispatch/preview' ? '/admin/dispatch' : request.url === '/fulfillment/stage' ? '/admin/fulfillment' : request.url === '/shopify/catalog-sync' ? '/admin/shopify' : request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
       : ['/leads', '/catalog', '/orders', '/tracking'].includes(request.url) ? '/admin/supply' : '/admin';
     response.writeHead(303, { Location: destination });
     response.end();
