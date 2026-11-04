@@ -1,7 +1,7 @@
 name: TradeLens preview checks
 on:
   push:
-    branches: [main, feat/international-commerce-preview]
+    branches: [main, feat/international-commerce-preview, feat/fulfillment-readiness]
   pull_request:
     branches: [main]
 jobs:
@@ -19,6 +19,7 @@ jobs:
           node --check evidence.mjs
           node --check launch.mjs
           node --check shopify-catalog.mjs
+          node --check fulfillment.mjs
           node --check server.mjs
       - name: Smoke test demo storefront and merchant authentication
         shell: bash
@@ -41,3 +42,4 @@ jobs:
 
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/launch | grep -q 'US / UK landed profitability'
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/shopify | grep -q 'Shopify catalog snapshot'
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/fulfillment | grep -q 'Fulfillment review queue'
