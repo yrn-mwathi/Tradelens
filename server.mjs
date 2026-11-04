@@ -348,9 +348,11 @@ function storefront() {
     <meta name="viewport" content="width=device-width,initial-scale=1"><title>TradeLens Store</title>
     <style>body{font:17px system-ui;background:#101827;color:#eef3ff;margin:0}main{max-width:1040px;margin:auto;padding:40px 20px}
     h1{font-size:clamp(36px,8vw,72px);margin:.2em 0}a,small{color:#82e6d4}.cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
-    article{padding:20px;border-radius:14px;border:1px solid #34425b;background:#192438}section{margin-top:32px}</style>
-    <main><small>TRADELENS STORE</small><h1>Smart tech for everyday life</h1>
-    <p>Explore innovative gadgets, technology accessories, and smart lifestyle products.</p>
+    article{padding:20px;border-radius:14px;border:1px solid #34425b;background:#192438}section{margin-top:32px}nav{display:flex;gap:20px;flex-wrap:wrap}header{margin-top:28px;padding:clamp(20px,6vw,72px);border-radius:24px;background:linear-gradient(125deg,#18334a,#173f42);border:1px solid #406271}</style>
+    <main><nav aria-label="Store navigation"><strong>TradeLens</strong> <a href="#collections">Collections</a> <a href="/admin">Merchant workspace</a></nav>
+    <header><small>GADGETS &amp; SMART LIVING</small><h1>Smart tech for everyday life</h1>
+    <p>Explore innovative gadgets, technology accessories, and smart lifestyle products.</p></header>
+    <section id="collections"><h2>Explore collections</h2><div class="cards">${collections.map(name => `<article><strong>${escape(name)}</strong></article>`).join('')}</div></section>
     ${listings.length ? collections.map(collection => {
       const products = listings.filter(item => item.collection === collection);
       if (!products.length) return '';
@@ -374,7 +376,9 @@ function listingControls(row, listing) {
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
 }
 
-function page() {
+const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply' };
+
+function page(path) {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
   const assessments = new Map(db.prepare('SELECT * FROM scout_assessments').all()
     .map(item => [item.candidate_id, item]));
@@ -399,6 +403,7 @@ function page() {
       : draft ? '<p>Draft request pending or needs review. Search Shopify for tradelens-' + row.id + '.</p>'
       : row.approved && shop && shopToken ? `<form method="post" action="/shopify/draft">
       <input type="hidden" name="id" value="${row.id}"><button>Create Shopify draft</button></form>` : '';
+    if (path === '/admin/engine') return row.approved ? `<article><h3>${escape(row.name)}</h3><p>${escape(row.variant)} · ${row.market}</p>${shopify}${listingControls(row, listings.get(row.id))}</article>` : '';
     const breakEven = row.revenue - row.supplier - row.shipping - row.duties - row.fees - row.losses;
     const contribution = breakEven - row.acquisition;
     const currency = markets[row.market];
@@ -409,8 +414,6 @@ function page() {
       <p>Estimated contribution <strong>${format(contribution)}</strong> · Margin ${(contribution / row.revenue * 100).toFixed(1)}%</p>
       <p>Break-even acquisition cost ${format(breakEven)}</p>
       ${row.approved ? '<strong>Approved for handoff</strong>' : `<form method="post" action="/approve"><input type="hidden" name="id" value="${row.id}"><button>Approve for handoff</button></form>`}
-      ${shopify}
-      ${listingControls(row, listings.get(row.id))}
       ${scout(row, assessments.get(row.id), badges.filter(badge => badge.candidate_id === row.id))}
     </article>`;
   }).join('');
@@ -419,11 +422,12 @@ function page() {
     *{box-sizing:border-box}body{margin:0;background:#101827;color:#eef3ff;font:16px system-ui}main{max-width:1060px;margin:auto;padding:32px 20px}
     header,section,article{margin-bottom:20px}section,article{background:#192438;border:1px solid #34425b;border-radius:14px;padding:20px}
     h1{font-size:48px;margin:8px 0}small,a{color:#82e6d4}p{line-height:1.5}label{display:grid;gap:5px}
+    nav{display:flex;flex-wrap:wrap;gap:16px;margin:18px 0}nav a[aria-current]{font-weight:800;text-decoration-thickness:3px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:14px}
     input,select,textarea,button{font:inherit;border-radius:7px;padding:10px;border:1px solid #50627e}
     input,select,textarea{width:100%;background:#111b2c;color:#fff}button{background:#82e6d4;color:#102128;cursor:pointer;font-weight:700;margin-top:12px}
-    </style><main><header><small>ACL SMART SOLUTIONS LTD</small><h1>TradeLens</h1><p>Product research and approval workspace · <a href="/store">Open buyer storefront</a></p>${process.env.TRADELENS_DEMO === '1' ? '<p><strong>Demo workspace.</strong> Sample figures are synthetic. Changes reset on restart.</p>' : ''}</header>
-    <section><h2>Add candidate</h2><p>Use USD for US, GBP for UK, KES for Kenya and NGN for Nigeria. Enter per-order amounts and cite your supporting evidence.</p>
+    </style><main><header><small>ACL SMART SOLUTIONS LTD</small><nav aria-label="Workspace">${Object.entries(workspaces).map(([url,label]) => `<a href="${url}"${url === path ? ' aria-current="page"' : ''}>${label}</a>`).join('')}<a href="/">Storefront</a></nav><h1>TradeLens ${workspaces[path]}</h1>${process.env.TRADELENS_DEMO === '1' ? '<p><strong>Demo workspace.</strong> Sample figures are synthetic. Changes reset on restart.</p>' : ''}</header>
+    ${path === '/admin' ? `<section><h2>Add candidate</h2><p>Use USD for US, GBP for UK, KES for Kenya and NGN for Nigeria. Enter per-order amounts and cite your supporting evidence.</p>
     <form method="post" action="/candidates"><div class="grid">
     <label>Product<input name="name" required maxlength="120"></label>
     <label>Variant<input name="variant" required maxlength="120"></label>
@@ -439,13 +443,17 @@ function page() {
       · Estimated contribution ${(profit / 100).toFixed(2)} ${markets[row.market]}
       · <a href="${escape(row.source)}" rel="noreferrer">Evidence</a></li>`).join('')}</ol>` : '<p>No qualifying candidates.</p>'}</section>
     <h2>Candidates</h2>${cards || '<p>No candidates yet.</p>'}
-    ${operations(rows)}
+    ` : ''}
+    ${path === '/admin/engine' ? `<section><h2>Store catalog</h2>
+    <p>${shop ? 'Manage approved products and Shopify handoff.' : 'Set SHOPIFY_SHOP to enable storefront listing controls.'}</p>
+    ${cards || '<p>Approve a candidate in Scout to bring it into the catalog.</p>'}</section>` : ''}
+    ${path === '/admin/supply' ? `${operations(rows)}
     <section><h2>Shopify paid orders</h2>
     <p>Recent paid-order notifications. Fulfillment assignment is a separate step.</p>
     <ul>${paidOrders.map(order => `<li>${escape(order.order_gid)} · ${order.line_count} lines</li>`).join('')}</ul>
     </section>
     <section><h2>Provider workspace</h2><div class="grid">${Object.entries(providers).map(([name, role]) =>
-      `<div><strong>${name}</strong><p>${role}<br><small>Awaiting verified connection</small></p></div>`).join('')}</div></section>
+      `<div><strong>${name}</strong><p>${role}<br><small>Awaiting verified connection</small></p></div>`).join('')}</div></section>` : ''}
     </main></html>`;
 }
 
@@ -472,7 +480,7 @@ createServer(async (request, response) => {
       return response.end('Webhook processing failed.');
     }
   }
-  if (request.method === 'GET' && request.url === '/store') {
+  if (request.method === 'GET' && ['/', '/store'].includes(request.url)) {
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     return response.end(storefront());
   }
@@ -482,9 +490,9 @@ createServer(async (request, response) => {
     return response.end('Sign in as admin.');
   }
   try {
-    if (request.method === 'GET' && request.url === '/') {
+    if (request.method === 'GET' && Object.hasOwn(workspaces, request.url)) {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return response.end(page());
+      return response.end(page(request.url));
     }
     if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing'].includes(request.url)) {
       response.statusCode = 404;
@@ -527,7 +535,9 @@ createServer(async (request, response) => {
     else if (request.url === '/store/listing') updateListing(form);
     else if (request.url.startsWith('/scout/')) recordScout(request.url, form);
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
-    response.writeHead(303, { Location: '/' });
+    const destination = ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
+      : ['/leads', '/catalog', '/orders', '/tracking'].includes(request.url) ? '/admin/supply' : '/admin';
+    response.writeHead(303, { Location: destination });
     response.end();
   } catch (error) {
     const databaseError = error.code?.startsWith('ERR_SQLITE');
