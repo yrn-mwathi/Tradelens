@@ -1,3 +1,4 @@
+import { renderCommerce } from './commerce.mjs';
 import { createServer } from 'node:http';
 import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
@@ -547,7 +548,11 @@ createServer(async (request, response) => {
   const storeUrl = new URL(request.url, 'http://localhost');
   if (request.method === 'GET' && ['/', '/store'].includes(storeUrl.pathname)) {
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return response.end(storefront(storeUrl));
+    const demo = process.env.TRADELENS_DEMO === '1';
+    const listings = demo ? [] : db.prepare(
+      'SELECT l.*, c.name, c.variant, c.revenue, c.market FROM store_listings l JOIN candidates c ON c.id=l.candidate_id WHERE l.shop=? AND c.approved IS NOT NULL ORDER BY c.name'
+    ).all(shop || '').map(item => ({...item, currency: markets[item.market]}));
+    return response.end(renderCommerce({url:storeUrl, listings, demo}));
   }
   const expected = 'Basic ' + Buffer.from('admin:' + password).toString('base64');
   if (password && !timingSafeEqual(digest(request.headers.authorization || ''), digest(expected))) {
