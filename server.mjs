@@ -340,26 +340,70 @@ function updateListing(form) {
     .run(id, collection, required(form, 'description', 1000), handle, shop);
 }
 
-function storefront() {
-  const listings = process.env.TRADELENS_DEMO === '1' ? [] : db.prepare(`
+const previewCatalog = [
+  ['GripStand Case', 'Magnetic phone case', 'A protective case concept with a fold-out stand for hands-free viewing.'],
+  ['Arc Charging Dock', 'Desktop charging', 'An upright charging dock concept that keeps your phone visible while you work.'],
+  ['Studio USB-C Hub', '7-port concept', 'A compact hub concept for connecting displays, storage and desk accessories.'],
+  ['Glow Desk Lamp', 'Ambient lighting', 'A compact lamp concept for adding soft light to a shelf or desk.'],
+  ['Transit Tech Pouch', 'Travel organizer', 'A zippered organizer concept for cables, adapters and small accessories.']
+];
+
+function productArt(collection) {
+  const shapes = [
+    '<rect x="87" y="30" width="126" height="160" rx="24" fill="#151724"/><rect x="101" y="44" width="48" height="46" rx="12" fill="#8884ac"/><circle cx="117" cy="60" r="8"/><circle cx="133" cy="75" r="8"/><circle cx="150" cy="130" r="32" fill="none" stroke="#b1aafa" stroke-width="7"/>',
+    '<path d="M104 171h104l24 19H71z" fill="#332449"/><rect x="105" y="35" width="100" height="135" rx="22" fill="#262035"/><circle cx="155" cy="100" r="29" fill="none" stroke="#edc7ff" stroke-width="8"/>',
+    '<path d="M206 98q62 0 57 53" fill="none" stroke="#191a23" stroke-width="10"/><rect x="54" y="75" width="159" height="75" rx="17" fill="#272b38"/><path d="M71 126h22m12 0h22m12 0h22m12 0h22" stroke="#9fa4c4" stroke-width="7"/>',
+    '<path d="M153 91v83m-45 7h92" stroke="#293b37" stroke-width="16" stroke-linecap="round"/><path d="M91 100a60 60 0 0 1 120 0z" fill="#fff3c6"/>',
+    '<rect x="56" y="60" width="190" height="105" rx="31" fill="#33414c"/><path d="M66 100h170m-32 0v20" stroke="#c1d6db" stroke-width="5"/><path d="M102 61q0-29 48-29t48 29" fill="none" stroke="#33414c" stroke-width="8"/>'
+  ];
+  return `<svg viewBox="0 0 300 220" aria-hidden="true">${shapes[collections.indexOf(collection)] || ''}</svg>`;
+}
+
+function storefront(url) {
+  const demo = process.env.TRADELENS_DEMO === '1';
+  const listings = demo ? previewCatalog.map(([name, variant, description], index) => ({
+    candidate_id: 'preview-' + index, name, variant, description, collection: collections[index]
+  })) : db.prepare(`
     SELECT l.*, c.name, c.variant FROM store_listings l JOIN candidates c ON c.id=l.candidate_id
     WHERE l.shop=? AND c.approved IS NOT NULL ORDER BY c.name`).all(shop || '');
+  const query = (url.searchParams.get('q') || '').trim().slice(0, 100);
+  const selected = collections.find(name => name === url.searchParams.get('collection'));
+  const detail = listings.find(item => item.candidate_id === url.searchParams.get('product'));
+  const featured = listings.find(item => item.collection === 'Desk & Work') || listings[0];
+  const visible = listings.filter(item => (!selected || item.collection === selected) &&
+    [item.name, item.variant, item.description, item.collection].join(' ').toLowerCase().includes(query.toLowerCase()));
+  const productLink = item => '/?product=' + encodeURIComponent(item.candidate_id);
+  const artwork = item => `<div class="art tone${collections.indexOf(item.collection)}">${productArt(item.collection)}</div>`;
   return `<!doctype html><html lang="en"><meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1"><title>TradeLens Store</title>
-    <style>body{font:17px system-ui;background:#101827;color:#eef3ff;margin:0}main{max-width:1040px;margin:auto;padding:40px 20px}
-    h1{font-size:clamp(36px,8vw,72px);margin:.2em 0}a,small{color:#82e6d4}.cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
-    article{padding:20px;border-radius:14px;border:1px solid #34425b;background:#192438}section{margin-top:32px}nav{display:flex;gap:20px;flex-wrap:wrap}header{margin-top:28px;padding:clamp(20px,6vw,72px);border-radius:24px;background:linear-gradient(125deg,#18334a,#173f42);border:1px solid #406271}</style>
-    <main><nav aria-label="Store navigation"><strong>TradeLens</strong> <a href="#collections">Collections</a> <a href="/admin">Merchant workspace</a></nav>
-    <header><small>GADGETS &amp; SMART LIVING</small><h1>Smart tech for everyday life</h1>
-    <p>Explore innovative gadgets, technology accessories, and smart lifestyle products.</p></header>
-    <section id="collections"><h2>Explore collections</h2><div class="cards">${collections.map(name => `<article><strong>${escape(name)}</strong></article>`).join('')}</div></section>
-    ${listings.length ? collections.map(collection => {
-      const products = listings.filter(item => item.collection === collection);
-      if (!products.length) return '';
-      return `<section><h2>${escape(collection)}</h2><div class="cards">${products.map(item =>
-        `<article><h3>${escape(item.name)}</h3><small>${escape(item.variant)}</small><p>${escape(item.description)}</p>
-        <a href="https://${escape(item.shop)}/products/${escape(item.handle)}">View price and availability on Shopify</a></article>`).join('')}</div></section>`;
-    }).join('') : '<p>Products will appear here when the catalog opens.</p>'}</main></html>`;
+    <meta name="viewport" content="width=device-width,initial-scale=1"><title>TradeLens | Tech &amp; everyday carry</title>
+    <style>
+    *{box-sizing:border-box}body{margin:0;background:#fcfaf6;color:#211e25;font:16px system-ui}
+    main,nav{max-width:1280px;margin:auto;padding:0 24px}a{color:inherit}nav{display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding-block:18px}nav strong{font-size:26px;letter-spacing:-1px}nav form{margin-left:auto;display:flex;gap:6px}input,button{font:inherit;padding:9px;border:1px solid #9a909e;border-radius:7px;min-width:0}button{cursor:pointer}
+    .strip{background:#221d2b;color:white;text-align:center;padding:9px;font-size:13px}.hero,.detail{display:grid;grid-template-columns:1fr 1fr;background:#eae3f8;border-radius:24px;overflow:hidden}.copy{padding:clamp(22px,5vw,72px)}h1{font-size:clamp(38px,6vw,82px);line-height:1;margin:.25em 0;letter-spacing:-.05em}
+    .action{display:inline-block;background:#241a33;color:white;padding:12px 18px;border-radius:8px;text-decoration:none}.eyebrow{font-size:12px;letter-spacing:.13em;font-weight:750}.art{display:grid;place-items:center;min-height:180px;background:#eae3f8}.art svg{width:min(100%,340px);filter:drop-shadow(8px 12px 9px #231e3740)}.tone1{background:#f1dbf1}.tone2{background:#dce2fa}.tone3{background:#dcead9}.tone4{background:#dce8ea}
+    .chips{display:flex;flex-wrap:wrap;gap:8px}.chips a{border:1px solid #ada3b4;border-radius:30px;padding:8px 14px;text-decoration:none}.chips a[aria-current]{background:#241a33;color:white}
+    section{margin:36px 0}.cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,215px),1fr))}.card{border:1px solid #ddd6df;border-radius:16px;overflow:hidden;background:white;text-decoration:none}.card:hover,.card:focus-visible{outline:2px solid #624689}.card div:last-child{padding:16px}.card h3{margin:.35em 0}.note{padding:12px;background:#f0e9da;border-radius:8px}footer{padding:28px 0;color:#514956}
+    @media(max-width:640px){.hero,.detail{grid-template-columns:1fr}nav form{margin-left:0;width:100%}nav input{flex:1}}
+    </style><div class="strip">TradeLens · Gadgets, desk upgrades &amp; everyday carry</div>
+    <nav aria-label="Store navigation"><strong><a href="/">TradeLens</a></strong><a href="/#discover">Discover</a><a href="/admin">Merchant workspace</a>
+    <form action="/" role="search"><input name="q" aria-label="Search products" placeholder="Search gadgets" value="${escape(query)}"><button>Search</button></form></nav>
+    <main>${demo ? '<p class="note">Preview catalog · Illustrated concepts for exploring the store.</p>' : ''}
+    ${detail ? `<section class="detail">${artwork(detail)}<div class="copy"><a href="/#discover">← Back to discover</a>
+    <p class="eyebrow">${escape(detail.collection)}</p><h1>${escape(detail.name)}</h1><p>${escape(detail.variant)}</p>
+    <p>${escape(detail.description)}</p>${demo ? '<p>Preview product · Checkout unavailable</p>' :
+      `<a class="action" href="https://${escape(detail.shop)}/products/${escape(detail.handle)}">View on Shopify</a>`}</div></section>`
+    : `<header class="hero"><div class="copy"><span class="eyebrow">THE EVERYDAY TECH EDIT</span>
+    <h1>Upgrade your everyday.</h1><p>Discover clever accessories for your phone, desk, home and travels.</p>
+    <a class="action" href="#discover">Explore the collection →</a></div>
+    ${featured ? `<a href="${productLink(featured)}" aria-label="Explore ${escape(featured.name)}">${artwork(featured)}</a>` :
+      `<div class="art tone2">${productArt('Desk & Work')}</div>`}</header>
+    <section id="discover"><span class="eyebrow">CURATED BY TRADELENS</span><h2>${query ? 'Search results' : 'Discover products'}</h2>
+    <div class="chips"><a href="/#discover"${selected ? '' : ' aria-current="true"'}>All products</a>
+    ${collections.map(name => `<a href="/?collection=${encodeURIComponent(name)}#discover"${selected === name ? ' aria-current="true"' : ''}>${escape(name)}</a>`).join('')}</div></section>
+    <div class="cards">${visible.map(item => `<a class="card" href="${productLink(item)}">${artwork(item)}<div>
+    <small>${escape(item.collection)}</small><h3>${escape(item.name)}</h3><span>${escape(item.variant)} · View details →</span></div></a>`).join('')}</div>
+    ${visible.length ? '' : '<p>No products found in this view.</p>'}`}
+    <footer>TradeLens · ACL Smart Solutions Ltd</footer></main></html>`;
 }
 
 function listingControls(row, listing) {
@@ -480,9 +524,10 @@ createServer(async (request, response) => {
       return response.end('Webhook processing failed.');
     }
   }
-  if (request.method === 'GET' && ['/', '/store'].includes(request.url)) {
+  const storeUrl = new URL(request.url, 'http://localhost');
+  if (request.method === 'GET' && ['/', '/store'].includes(storeUrl.pathname)) {
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return response.end(storefront());
+    return response.end(storefront(storeUrl));
   }
   const expected = 'Basic ' + Buffer.from('admin:' + password).toString('base64');
   if (password && !timingSafeEqual(digest(request.headers.authorization || ''), digest(expected))) {
