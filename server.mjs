@@ -36,6 +36,23 @@ const providers = {
   DSers: 'AliExpress fulfillment',
   CJDropshipping: 'Sourcing, warehouse and shipping'
 };
+const fulfillmentProviders = ['AutoDS', 'Printify', 'Zendrop', 'Syncee', 'DSers', 'CJDropshipping'];
+db.exec(`
+  PRAGMA foreign_keys = ON;
+  CREATE TABLE IF NOT EXISTS supplier_leads (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, notes TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS order_lines (
+    reference TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidates(id),
+    provider TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity > 0),
+    tracking TEXT
+  );
+  CREATE TABLE IF NOT EXISTS catalog_mappings (
+    candidate_id TEXT PRIMARY KEY REFERENCES candidates(id),
+    provider TEXT NOT NULL, sku TEXT NOT NULL, stock INTEGER NOT NULL CHECK(stock >= 0)
+  );
+`);
+
 const escape = value => String(value).replace(/[&<>"']/g, c => ({
   '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
 })[c]);
@@ -51,6 +68,91 @@ function required(form, key, limit) {
   const value = form.get(key)?.trim();
   if (!value || value.length > limit) throw new Error('Invalid ' + key);
   return value;
+}
+
+function operations(rows) {
+  const candidates = rows.filter(row => row.approved);
+  const options = candidates.map(row =>
+    `<option value="${row.id}">${escape(row.name)} · ${escape(row.variant)} · ${row.market}</option>`).join('');
+  const providerOptions = fulfillmentProviders.map(name => `<option>${name}</option>`).join('');
+  const leads = db.prepare('SELECT * FROM supplier_leads ORDER BY name').all();
+  const mappings = db.prepare(`SELECT m.*, c.name, c.market FROM catalog_mappings m
+    JOIN candidates c ON c.id=m.candidate_id ORDER BY c.name`).all();
+  const lines = db.prepare(`SELECT l.*, c.name FROM order_lines l
+    JOIN candidates c ON c.id=l.candidate_id ORDER BY l.reference`).all();
+  return `<section><h2>Supplier leads</h2>
+    <form method="post" action="/leads"><div class="grid">
+    <label>Supplier name<input name="name" required maxlength="120"></label>
+    <label>Source<select name="provider">${Object.keys(providers).map(name => `<option>${name}</option>`).join('')}</select></label>
+    <label>Verification notes<input name="notes" required maxlength="1200"></label>
+    </div><button>Save lead</button></form>
+    <ul>${leads.map(lead => `<li>${escape(lead.name)} · ${escape(lead.provider)} · ${escape(lead.notes)}</li>`).join('')}</ul></section>
+    <section><h2>Catalog and fulfillment</h2><p>Local records for approved variants. Update stock from your provider and record tracking after fulfillment.</p>
+    ${options ? `<form method="post" action="/catalog"><div class="grid">
+    <label>Approved variant<select name="id">${options}</select></label>
+    <label>Fulfillment owner<select name="provider">${providerOptions}</select></label>
+    <label>Provider SKU<input name="sku" required maxlength="120"></label>
+    <label>Reported stock<input name="stock" type="number" min="0" max="999999" required></label>
+    </div><button>Save mapping</button></form>` : '<p>Approve a candidate to create its catalog mapping.</p>'}
+    <ul>${mappings.map(item => `<li>${escape(item.name)} · ${item.market} · ${escape(item.provider)} · ${escape(item.sku)} · ${item.stock} reported units</li>`).join('')}</ul>
+    ${mappings.length ? `<form method="post" action="/orders"><div class="grid">
+    <label>Shopify order line reference<input name="reference" required maxlength="120"></label>
+    <label>Mapped variant<select name="id">${mappings.map(item =>
+      `<option value="${item.candidate_id}">${escape(item.name)} · ${item.market} · ${escape(item.sku)}</option>`).join('')}</select></label>
+    <label>Quantity<input name="quantity" type="number" min="1" max="999999" required></label>
+    </div><button>Assign order line</button></form>` : ''}
+    ${lines.map(line => `<article><strong>${escape(line.reference)}</strong> · ${escape(line.name)} · ${escape(line.provider)} · Qty ${line.quantity}
+    <form method="post" action="/tracking"><input type="hidden" name="reference" value="${escape(line.reference)}">
+    <label>Tracking number<input name="tracking" required maxlength="120" value="${escape(line.tracking ?? '')}"></label>
+    <button>Save tracking</button></form></article>`).join('')}</section>`;
+}
+
+function count(form, key, minimum) {
+  const raw = required(form, key, 6);
+  if (!/^\d+$/.test(raw) || Number(raw) < minimum) throw new Error('Invalid ' + key);
+  return Number(raw);
+}
+
+function saveOperation(path, form) {
+  if (path === '/leads') {
+    const provider = required(form, 'provider', 30);
+    if (!Object.hasOwn(providers, provider)) throw new Error('Unknown source.');
+    db.prepare('INSERT INTO supplier_leads VALUES (?,?,?,?)').run(randomUUID(),
+      required(form, 'name', 120), provider, required(form, 'notes', 1200));
+    return;
+  }
+  if (path === '/catalog') {
+    const id = required(form, 'id', 36);
+    const provider = required(form, 'provider', 30);
+    if (!fulfillmentProviders.includes(provider)) throw new Error('Unknown fulfillment provider.');
+    if (!db.prepare('SELECT id FROM candidates WHERE id=? AND approved IS NOT NULL').get(id)) {
+      throw new Error('Choose an approved candidate.');
+    }
+    db.prepare(`INSERT INTO catalog_mappings VALUES (?,?,?,?)
+      ON CONFLICT(candidate_id) DO UPDATE SET provider=excluded.provider, sku=excluded.sku, stock=excluded.stock`)
+      .run(id, provider, required(form, 'sku', 120), count(form, 'stock', 0));
+    return;
+  }
+  const reference = required(form, 'reference', 120);
+  if (path === '/tracking') {
+    const result = db.prepare('UPDATE order_lines SET tracking=? WHERE reference=?')
+      .run(required(form, 'tracking', 120), reference);
+    if (!result.changes) throw new Error('Order line not found.');
+    return;
+  }
+  const mapping = db.prepare('SELECT * FROM catalog_mappings WHERE candidate_id=?')
+    .get(required(form, 'id', 36));
+  if (!mapping) throw new Error('Choose a mapped candidate.');
+  const quantity = count(form, 'quantity', 1);
+  const result = db.prepare(`INSERT INTO order_lines (reference,candidate_id,provider,quantity)
+    VALUES (?,?,?,?) ON CONFLICT(reference) DO NOTHING`)
+    .run(reference, mapping.candidate_id, mapping.provider, quantity);
+  if (!result.changes) {
+    const existing = db.prepare('SELECT * FROM order_lines WHERE reference=?').get(reference);
+    if (existing.candidate_id !== mapping.candidate_id || existing.provider !== mapping.provider || existing.quantity !== quantity) {
+      throw new Error('This order line already has a fulfillment assignment.');
+    }
+  }
 }
 
 function page() {
@@ -86,6 +188,7 @@ function page() {
     ${Object.entries(fields).map(([key,label]) => `<label>${label}<input name="${key}" inputmode="decimal" required></label>`).join('')}
     <label>Evidence notes<textarea name="evidence" required maxlength="1200"></textarea></label></div><button>Save candidate</button></form></section>
     <h2>Candidates</h2>${cards || '<p>No candidates yet.</p>'}
+    ${operations(rows)}
     <section><h2>Provider workspace</h2><div class="grid">${Object.entries(providers).map(([name, role]) =>
       `<div><strong>${name}</strong><p>${role}<br><small>Awaiting verified connection</small></p></div>`).join('')}</div></section>
     </main></html>`;
@@ -118,7 +221,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page());
     }
-    if (request.method !== 'POST' || !['/candidates','/approve'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -143,7 +246,7 @@ createServer(async (request, response) => {
         (id,name,variant,market,evidence,source,created,revenue,supplier,shipping,duties,fees,acquisition,losses)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(randomUUID(), required(form,'name',120), required(form,'variant',120),
           market, required(form,'evidence',1200), source.href, new Date().toISOString(), ...amounts);
-    } else {
+    } else if (request.url === '/approve') {
       const id = required(form, 'id', 36);
       const result = db.prepare('UPDATE candidates SET approved=COALESCE(approved, ?) WHERE id=?').run(new Date().toISOString(), id);
       if (!result.changes) {
@@ -151,6 +254,7 @@ createServer(async (request, response) => {
         return response.end('Candidate not found.');
       }
     }
+    if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
     response.writeHead(303, { Location: '/' });
     response.end();
   } catch (error) {
