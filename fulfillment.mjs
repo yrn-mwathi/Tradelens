@@ -1,5 +1,6 @@
 const esc = x => String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 export function initializeFulfillment(db){
+ db.exec(`CREATE TABLE IF NOT EXISTS shopify_paid_order_lines(shop TEXT NOT NULL, order_gid TEXT NOT NULL, line_id TEXT NOT NULL, variant_id TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>0), PRIMARY KEY(shop,order_gid,line_id));`);
  db.exec(`CREATE TABLE IF NOT EXISTS fulfillment_queue(
  id TEXT PRIMARY KEY, shop TEXT NOT NULL, order_gid TEXT NOT NULL,
  provider TEXT NOT NULL, candidate_id TEXT NOT NULL,
@@ -20,6 +21,10 @@ export function stageFulfillment(db,form,shop){
  if(!db.prepare('SELECT 1 FROM shopify_paid_orders WHERE shop=? AND order_gid=?').get(shop,order))throw new Error('Order must be received from a verified Shopify paid-order webhook.');
  const row=db.prepare('SELECT 1 FROM candidates WHERE id=? AND approved IS NOT NULL').get(candidate);
  if(!row)throw new Error('Candidate must be approved.');
+ const listing=db.prepare('SELECT variant_id FROM store_listings WHERE candidate_id=? AND shop=?').get(candidate,shop);
+ if(!listing?.variant_id)throw new Error('Candidate needs a synchronized Shopify variant listing.');
+ const matched=db.prepare('SELECT SUM(quantity) AS quantity FROM shopify_paid_order_lines WHERE shop=? AND order_gid=? AND variant_id=?').get(shop,order,listing.variant_id);
+ if(!matched?.quantity)throw new Error('The verified paid order does not contain this candidate’s Shopify variant. Older orders must be reverified before staging.');
  const mapping=db.prepare('SELECT * FROM catalog_mappings WHERE candidate_id=?').get(candidate);
  if(!mapping||mapping.provider!==provider||mapping.stock<=0)throw new Error('An in-stock catalog mapping to this provider is required.');
  db.prepare(`INSERT INTO fulfillment_queue VALUES(?,?,?,?,?,?,?,?)
