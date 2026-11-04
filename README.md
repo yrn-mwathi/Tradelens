@@ -4,7 +4,7 @@ TradeLens combines a public gadget storefront with an approval-led merchant work
 
 ## Preview in GitHub Codespaces
 
-1. Open the branch `feat/international-commerce-preview` in Codespaces.
+1. Open the `feat/unified-commerce-intelligence-launch` branch in Codespaces (or `main` after merge).
 2. Use Node.js **24 or later** (Node's built-in `node:sqlite` is required).
 3. Run:
 
@@ -12,7 +12,7 @@ TradeLens combines a public gadget storefront with an approval-led merchant work
 TRADELENS_DEMO=1 HOST=0.0.0.0 TRADELENS_PASSWORD='change-this-demo-password-to-a-long-random-value' node server.mjs
 ```
 
-4. Open forwarded port **3000** (keep the port private). The public storefront is `/`. Merchant pages are `/admin`, `/admin/engine` and `/admin/supply`.
+4. Open forwarded port **3000** (keep the port private). The public storefront is `/`. Merchant pages include `/admin`, `/admin/engine`, `/admin/supply`, `/admin/evidence` and `/admin/launch` and `/admin/shopify`.
 
 Preview mode uses **eight synthetic product concepts** with illustrative prices and vector artwork. It has working category navigation, keyword search, sort options, gift/work/travel discovery links and individual product detail pages. It does **not** accept payments or imply live supplier stock.
 
@@ -56,3 +56,20 @@ The existing merchant pages manage:
 ## Testing checklist
 
 Run `node --check commerce.mjs` and `node --check server.mjs` under Node 24+. Then verify `/health`, home, category, search, sort, gift finder, product detail and admin authentication. Do not expose the admin port publicly without a strong password and HTTPS.
+
+## Combined international launch work
+
+See [the unified release plan](docs/UNIFIED_LAUNCH.md). The International admin workspace now records source-linked landed-profit scenarios for US (USD) and UK (GBP), including shipping, advertising, fees, duties and refunds. These are **manual assumptions**, not live provider quotations or automatic tax calculations. The Shopify and supplier integration gates in the plan remain to be implemented and tested before launch.
+
+### Shopify catalog synchronization
+
+In persistent mode, set `SHOPIFY_SHOP` and `SHOPIFY_ADMIN_TOKEN` with `read_products` permission, then open `/admin/shopify` and choose **Sync Shopify catalog**. The snapshot imports up to 250 products, with up to 50 variants per product; larger catalogs or products with more variants fail without replacing the previous snapshot. It stores Shopify product/variant IDs, SKUs, prices, status, inventory quantities and image URLs in SQLite. This is a **read-only snapshot** and does not automatically publish to the TradeLens storefront or trigger fulfillment. Shopify prices are in the shop currency; no conversion is assumed.
+
+### Publish synchronized variants to the storefront
+
+1. Sync the real catalog from `/admin/shopify` with a configured Shopify Admin API token.
+2. In `/admin`, create a candidate using the **same selling price and market currency** as the Shopify variant; attach research evidence and approve it.
+3. In `/admin/engine`, open **Buyer storefront listing**, select an ACTIVE synchronized Shopify variant, enter the exact Shopify product handle, collection and description, then publish.
+4. A listing is rejected when the variant is absent from the last snapshot, not ACTIVE, out of stock (where tracked), has a mismatched price, or has an image URL inconsistent with the synced image. The snapshot is not live stock validation; keep Shopify checkout as the final availability authority.
+
+Do not publish a product unless the Shopify shop currency matches the candidate market currency. This release does not perform FX conversion or cross-border tax calculation.

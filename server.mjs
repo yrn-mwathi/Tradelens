@@ -1,3 +1,5 @@
+import { initializeShopifyCatalog, syncShopifyCatalog, shopifyCatalogWorkspace } from './shopify-catalog.mjs';
+import { initializeLaunch, saveLaunchScenario, launchWorkspace } from './launch.mjs';
 import { initializeEvidence, recordEvidence, evidenceWorkspace } from './evidence.mjs';
 import { renderCommerce } from './commerce.mjs';
 import { createServer } from 'node:http';
@@ -19,6 +21,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS candidates (
 )`);
 
 initializeEvidence(db);
+initializeLaunch(db);
+initializeShopifyCatalog(db);
 
 const fields = {
   revenue: 'Net selling price (excluding collected tax)',
@@ -353,6 +357,14 @@ function updateListing(form) {
   }
   if (compatibility && compatibility.length > 400) throw new Error('Compatibility details exceed 400 characters.');
   if (variantId && !/^[1-9][0-9]{0,19}$/.test(variantId)) throw new Error('Enter a numeric Shopify variant ID.');
+  const cached = db.prepare('SELECT * FROM shopify_catalog_snapshot WHERE shop=? AND handle=? AND variant_gid=?').get(shop,handle,'gid://shopify/ProductVariant/'+variantId);
+  if (!variantId || !cached || cached.status !== 'ACTIVE') {
+    throw new Error('Choose an ACTIVE variant from the synchronized Shopify catalog. Sync the catalog first.');
+  }
+  if (cached.inventory !== null && cached.inventory <= 0) throw new Error('Shopify snapshot shows no stock for this variant.');
+  const candidatePrice = db.prepare('SELECT revenue FROM candidates WHERE id=?').get(id).revenue;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(cached.price) || Math.round(Number(cached.price)*100) !== candidatePrice) throw new Error('Candidate selling price must match the synchronized Shopify variant price; confirm Shopify shop currency matches candidate market.');
+  if (photo && photo !== cached.image_url) throw new Error('Use the synchronized Shopify image or leave the photo blank.');
   db.prepare(`INSERT INTO store_listings
     (candidate_id,collection,description,handle,shop,photo,compatibility,variant_id) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(candidate_id) DO UPDATE SET collection=excluded.collection,
@@ -438,13 +450,14 @@ function listingControls(row, listing) {
     <label>Public description<textarea name="description" required maxlength="1000">${escape(listing?.description ?? '')}</textarea></label>
     <label>Shopify CDN photo URL<input name="photo" type="url" maxlength="2048" value="${escape(listing?.photo ?? '')}"></label>
     <label>Compatibility and supported models<textarea name="compatibility" maxlength="400">${escape(listing?.compatibility ?? '')}</textarea></label>
-    <label>Shopify variant ID for Buy this variant<input name="variant_id" inputmode="numeric" maxlength="20" value="${escape(listing?.variant_id ?? '')}"></label>
+    <label>Shopify variant (synced ACTIVE catalog)<select name="variant_id" required><option value="">Select synchronized variant</option>${db.prepare("SELECT variant_gid,title,variant_title,handle,inventory FROM shopify_catalog_snapshot WHERE shop=? AND status='ACTIVE' ORDER BY title LIMIT 250").all(shop).map(v=>`<option value="${escape(v.variant_gid.split('/').at(-1))}"${listing?.variant_id === v.variant_gid.split('/').at(-1) ? ' selected' : ''}>${escape(v.title)} — ${escape(v.variant_title)} (${escape(v.handle)}) · stock ${escape(v.inventory ?? 'untracked')}</option>`).join('')}</select></label>
+    <p>The selected variant's Shopify handle must match the handle above. Sync the catalog first in Shopify catalog.</p>
     <button>Publish to TradeLens storefront</button></form>
     ${listing ? `<form method="post" action="/store/listing"><input type="hidden" name="id" value="${row.id}">
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
 }
 
-const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence' };
+const workspaces = { '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International', '/admin/shopify': 'Shopify catalog' };
 
 function page(path) {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
@@ -516,6 +529,8 @@ function page(path) {
     <p>${shop ? 'Manage approved products and Shopify handoff.' : 'Set SHOPIFY_SHOP to enable storefront listing controls.'}</p>
     ${cards || '<p>Approve a candidate in Scout to bring it into the catalog.</p>'}</section>` : ''}
     ${path === '/admin/evidence' ? evidenceWorkspace(db) : ''}
+    ${path === '/admin/launch' ? launchWorkspace(db) : ''}
+    ${path === '/admin/shopify' ? shopifyCatalogWorkspace(db, shop, Boolean(shop && shopToken)) : ''}
     ${path === '/admin/supply' ? `${operations(rows)}
     <section><h2>Shopify paid orders</h2>
     <p>Recent paid-order notifications. Fulfillment assignment is a separate step.</p>
@@ -568,7 +583,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page(request.url));
     }
-    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario','/shopify/catalog-sync'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -609,8 +624,10 @@ createServer(async (request, response) => {
     else if (request.url === '/store/listing') updateListing(form);
     else if (request.url.startsWith('/scout/')) recordScout(request.url, form);
     else if (request.url.startsWith('/research/')) recordEvidence(db, request.url, form);
+    else if (request.url === '/launch/scenario') saveLaunchScenario(db, form);
+    else if (request.url === '/shopify/catalog-sync') await syncShopifyCatalog(db,{shop,token:shopToken});
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
-    const destination = request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
+    const destination = request.url === '/shopify/catalog-sync' ? '/admin/shopify' : request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
       : ['/leads', '/catalog', '/orders', '/tracking'].includes(request.url) ? '/admin/supply' : '/admin';
     response.writeHead(303, { Location: destination });
     response.end();
