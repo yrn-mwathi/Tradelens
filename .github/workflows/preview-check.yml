@@ -17,6 +17,7 @@ jobs:
         run: |
           node --check commerce.mjs
           node --check evidence.mjs
+          node --check launch.mjs
           node --check server.mjs
       - name: Smoke test demo storefront and merchant authentication
         shell: bash
@@ -36,3 +37,5 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/admin)" = "401"
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin | grep -q 'TradeLens Scout'
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/evidence | grep -q 'Research evidence ledger'
+
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/launch | grep -q 'US / UK landed profitability'
