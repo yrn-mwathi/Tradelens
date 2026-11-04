@@ -19,6 +19,8 @@ export function previewSupplierDispatch(db,form,shop){
  if(q.provider==='Printify'){
   const snapshot=db.prepare('SELECT * FROM printify_catalog_snapshot WHERE sku=? AND enabled=1 AND available=1 ORDER BY fetched_at DESC LIMIT 1').get(mapping.sku);
   if(!snapshot||Date.now()-Date.parse(snapshot.fetched_at)>24*60*60*1000)throw new Error('Refresh the available Printify SKU catalog before preparing dispatch.');
+  const matches=db.prepare('SELECT COUNT(*) AS n FROM printify_catalog_snapshot WHERE sku=? AND enabled=1 AND available=1 AND fetched_at>=?').get(mapping.sku,new Date(Date.now()-86400000).toISOString());
+  if(matches.n!==1)throw new Error('Printify SKU must have exactly one fresh available catalog match.');
  }
  const payload={provider:q.provider,external_reference:q.order_gid,supplier_sku:mapping.sku,quantity:line.quantity,shopify_variant_id:listing.variant_id,shipping_address:null,shipping_method:null,shipping_quote:null};
  db.prepare(`INSERT INTO supplier_dispatch_previews VALUES (?,?,?,?,?,?,?)
