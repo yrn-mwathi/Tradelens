@@ -143,8 +143,22 @@ async function receivePaidOrder(request, response) {
     response.statusCode = 400;
     return response.end();
   }
-  db.prepare('INSERT OR IGNORE INTO shopify_paid_orders VALUES (?,?,?)')
-    .run(shop, order.admin_graphql_api_id, order.line_items.length);
+  const lines = order.line_items.map(line => {
+    const lineId = String(line.id ?? '');
+    const variantId = String(line.variant_id ?? '');
+    const quantity = line.quantity;
+    if (!/^[1-9]\\d*$/.test(lineId) || !/^[1-9]\\d*$/.test(variantId) ||
+        !Number.isSafeInteger(quantity) || quantity < 1) return null;
+    return [shop,order.admin_graphql_api_id,lineId,variantId,quantity];
+  }).filter(Boolean);
+  db.exec('BEGIN');
+  try {
+    db.prepare('INSERT OR IGNORE INTO shopify_paid_orders VALUES (?,?,?)')
+      .run(shop, order.admin_graphql_api_id, order.line_items.length);
+    const insertLine = db.prepare('INSERT OR IGNORE INTO shopify_paid_order_lines VALUES (?,?,?,?,?)');
+    for (const line of lines) insertLine.run(...line);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   response.statusCode = 204;
   return response.end();
 }
