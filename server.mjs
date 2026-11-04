@@ -7,7 +7,7 @@ const host = process.env.HOST || '127.0.0.1';
 if (host !== '127.0.0.1' && (!password || password.length < 20)) {
   throw new Error('Set TRADELENS_PASSWORD to at least 20 characters before binding externally.');
 }
-const db = new DatabaseSync(process.env.TRADELENS_DB || 'tradelens.sqlite');
+const db = new DatabaseSync(process.env.TRADELENS_DEMO === '1' ? ':memory:' : (process.env.TRADELENS_DB || 'tradelens.sqlite'));
 db.exec(`CREATE TABLE IF NOT EXISTS candidates (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, variant TEXT NOT NULL, market TEXT NOT NULL,
   evidence TEXT NOT NULL, source TEXT NOT NULL, created TEXT NOT NULL,
@@ -59,8 +59,8 @@ const escape = value => String(value).replace(/[&<>"']/g, c => ({
 const digest = value => createHash('sha256').update(value).digest();
 
 const shop = process.env.SHOPIFY_SHOP?.toLowerCase();
-const shopToken = process.env.SHOPIFY_ADMIN_TOKEN;
-const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET;
+const shopToken = process.env.TRADELENS_DEMO === '1' ? undefined : process.env.SHOPIFY_ADMIN_TOKEN;
+const webhookSecret = process.env.TRADELENS_DEMO === '1' ? undefined : process.env.SHOPIFY_WEBHOOK_SECRET;
 if (shop && !/^[a-z0-9][a-z0-9-]*[.]myshopify[.]com$/.test(shop)) {
   throw new Error('SHOPIFY_SHOP must be a myshopify.com hostname.');
 }
@@ -252,6 +252,23 @@ db.exec(`
   );
 `);
 
+if (process.env.TRADELENS_DEMO === '1') {
+  db.exec(`BEGIN;
+    INSERT OR IGNORE INTO candidates
+      VALUES ('demo-hub','Demo USB-C desk hub','7-port','US',
+        'Synthetic example for exploring TradeLens. Figures are illustrative.',
+        'https://example.com/',datetime('now'),4900,1400,500,200,180,650,150,datetime('now'));
+    INSERT OR IGNORE INTO scout_assessments
+      VALUES ('demo-hub',82,75,68,80,'Synthetic analyst inputs for this demo.',datetime('now'));
+    INSERT OR IGNORE INTO supplier_leads
+      VALUES ('demo-supplier','Demo supplier','CJDropshipping','Synthetic supplier lead');
+    INSERT OR IGNORE INTO catalog_mappings
+      VALUES ('demo-hub','CJDropshipping','DEMO-HUB',24);
+    INSERT OR IGNORE INTO order_lines
+      VALUES ('demo-order-line','demo-hub','CJDropshipping',1,'DEMO-TRACKING');
+    COMMIT;`);
+}
+
 function contribution(row) {
   return row.revenue - row.supplier - row.shipping - row.duties - row.fees - row.acquisition - row.losses;
 }
@@ -340,7 +357,7 @@ function page() {
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:14px}
     input,select,textarea,button{font:inherit;border-radius:7px;padding:10px;border:1px solid #50627e}
     input,select,textarea{width:100%;background:#111b2c;color:#fff}button{background:#82e6d4;color:#102128;cursor:pointer;font-weight:700;margin-top:12px}
-    </style><main><header><small>ACL SMART SOLUTIONS LTD</small><h1>TradeLens</h1><p>Product research and approval workspace</p></header>
+    </style><main><header><small>ACL SMART SOLUTIONS LTD</small><h1>TradeLens</h1><p>Product research and approval workspace</p>${process.env.TRADELENS_DEMO === '1' ? '<p><strong>Demo workspace.</strong> Sample figures are synthetic. Changes reset on restart.</p>' : ''}</header>
     <section><h2>Add candidate</h2><p>Use USD for US, GBP for UK, KES for Kenya and NGN for Nigeria. Enter per-order amounts and cite your supporting evidence.</p>
     <form method="post" action="/candidates"><div class="grid">
     <label>Product<input name="name" required maxlength="120"></label>
@@ -404,7 +421,10 @@ createServer(async (request, response) => {
       response.statusCode = 404;
       return response.end('Not found');
     }
-    const origin = process.env.TRADELENS_ORIGIN || 'http://' + request.headers.host;
+    const codespaceOrigin = process.env.CODESPACE_NAME && process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN
+      ? 'https://' + process.env.CODESPACE_NAME + '-' + (process.env.PORT || '3000') + '.' + process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN
+      : null;
+    const origin = process.env.TRADELENS_ORIGIN || codespaceOrigin || 'http://' + request.headers.host;
     if (request.headers.origin !== origin || !request.headers['content-type']?.startsWith('application/x-www-form-urlencoded')) {
       response.statusCode = 403;
       return response.end('Submit the form from the dashboard.');
