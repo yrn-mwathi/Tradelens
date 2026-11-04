@@ -1,7 +1,7 @@
 name: TradeLens preview checks
 on:
   push:
-    branches: [main, feat/international-commerce-preview]
+    branches: [main, feat/international-commerce-preview, feat/fulfillment-readiness]
   pull_request:
     branches: [main]
 jobs:
