@@ -30,6 +30,8 @@ export function stageFulfillment(db,form,shop){
  if(provider==='Printify'){
   const snapshot=db.prepare('SELECT * FROM printify_catalog_snapshot WHERE sku=? AND enabled=1 AND available=1 ORDER BY fetched_at DESC LIMIT 1').get(mapping.sku);
   if(!snapshot)throw new Error('Printify supplier SKU must appear as enabled and available in a synchronized catalog.');
+  const matches=db.prepare('SELECT COUNT(*) AS n FROM printify_catalog_snapshot WHERE sku=? AND enabled=1 AND available=1 AND fetched_at>=?').get(mapping.sku,new Date(Date.now()-86400000).toISOString());
+  if(matches.n!==1)throw new Error('Printify SKU must have exactly one fresh available catalog match.');
   if(Date.now()-Date.parse(snapshot.fetched_at)>24*60*60*1000)throw new Error('Printify catalog evidence is older than 24 hours; synchronize again.');
  }
  db.prepare(`INSERT INTO fulfillment_queue VALUES(?,?,?,?,?,?,?,?)
