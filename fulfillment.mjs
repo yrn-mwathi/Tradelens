@@ -26,7 +26,7 @@ export function stageFulfillment(db,form,shop){
  const matched=db.prepare('SELECT SUM(quantity) AS quantity FROM shopify_paid_order_lines WHERE shop=? AND order_gid=? AND variant_id=?').get(shop,order,listing.variant_id);
  if(!matched?.quantity)throw new Error('The verified paid order does not contain this candidate’s Shopify variant. Older orders must be reverified before staging.');
  const mapping=db.prepare('SELECT * FROM catalog_mappings WHERE candidate_id=?').get(candidate);
- if(!mapping||mapping.provider!==provider||mapping.stock<=0)throw new Error('An in-stock catalog mapping to this provider is required.');
+ if(!mapping||mapping.provider!==provider||mapping.stock<matched.quantity)throw new Error('Supplier mapping must have enough stock for the verified ordered quantity.');
  db.prepare(`INSERT INTO fulfillment_queue VALUES(?,?,?,?,?,?,?,?)
  ON CONFLICT(shop,order_gid,provider,candidate_id) DO UPDATE SET notes=excluded.notes`).run(
  shop+'|'+order+'|'+provider+'|'+candidate,shop,order,provider,candidate,'needs_review',notes,new Date().toISOString());
