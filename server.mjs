@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 const password = process.env.TRADELENS_PASSWORD;
@@ -57,6 +57,87 @@ const escape = value => String(value).replace(/[&<>"']/g, c => ({
   '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
 })[c]);
 const digest = value => createHash('sha256').update(value).digest();
+
+const shop = process.env.SHOPIFY_SHOP?.toLowerCase();
+const shopToken = process.env.SHOPIFY_ADMIN_TOKEN;
+const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET;
+if (shop && !/^[a-z0-9][a-z0-9-]*[.]myshopify[.]com$/.test(shop)) {
+  throw new Error('SHOPIFY_SHOP must be a myshopify.com hostname.');
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shopify_drafts (
+    shop TEXT NOT NULL, candidate_id TEXT NOT NULL REFERENCES candidates(id),
+    product_gid TEXT, PRIMARY KEY (shop, candidate_id)
+  );
+  CREATE TABLE IF NOT EXISTS shopify_paid_orders (
+    shop TEXT NOT NULL, order_gid TEXT NOT NULL, line_count INTEGER NOT NULL,
+    PRIMARY KEY (shop, order_gid)
+  );
+`);
+
+async function createDraft(id) {
+  if (!shop || !shopToken) throw new Error('Configure the Shopify development store first.');
+  const candidate = db.prepare('SELECT * FROM candidates WHERE id=? AND approved IS NOT NULL').get(id);
+  if (!candidate) throw new Error('Choose an approved candidate.');
+  const reserve = db.prepare('INSERT OR IGNORE INTO shopify_drafts (shop,candidate_id) VALUES (?,?)').run(shop, id);
+  if (!reserve.changes) return;
+  try {
+    const result = await fetch('https://' + shop + '/admin/api/2026-10/graphql.json', {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': shopToken },
+      body: JSON.stringify({
+        query: 'mutation CreateDraft($product: ProductCreateInput!) { productCreate(product: $product) { product { id status } userErrors { message } } }',
+        variables: { product: {
+          title: candidate.name + ' - ' + candidate.variant, status: 'DRAFT', handle: 'tradelens-' + id
+        } }
+      })
+    });
+    if (!result.ok) throw new Error('Shopify HTTP failure');
+    const body = await result.json();
+    const product = body.data?.productCreate?.product;
+    if (product?.status !== 'DRAFT' || !/^gid:\/\/shopify\/Product\/\d+$/.test(product.id)) {
+      throw new Error('Missing Shopify draft');
+    }
+    db.prepare('UPDATE shopify_drafts SET product_gid=? WHERE shop=? AND candidate_id=?')
+      .run(product.id, shop, id);
+  } catch {
+    throw new Error('Draft outcome needs review. Search Shopify for handle tradelens-' + id + ' before retrying.');
+  }
+}
+
+async function receivePaidOrder(request, response) {
+  if (!shop || !webhookSecret) {
+    response.statusCode = 404;
+    return response.end();
+  }
+  const raw = await readBody(request, 2_000_000);
+  if (!raw) {
+    response.statusCode = 413;
+    return response.end();
+  }
+  const signature = Buffer.from(request.headers['x-shopify-hmac-sha256'] || '', 'base64');
+  const expected = createHmac('sha256', webhookSecret).update(raw).digest();
+  if (signature.length !== expected.length || !timingSafeEqual(signature, expected) ||
+      request.headers['x-shopify-shop-domain'] !== shop || request.headers['x-shopify-topic'] !== 'orders/paid') {
+    response.statusCode = 401;
+    return response.end();
+  }
+  let order;
+  try { order = JSON.parse(raw.toString()); } catch {
+    response.statusCode = 400;
+    return response.end();
+  }
+  if (typeof order?.admin_graphql_api_id !== 'string' ||
+      !/^gid:\/\/shopify\/Order\/\d+$/.test(order.admin_graphql_api_id) ||
+      !Array.isArray(order.line_items)) {
+    response.statusCode = 400;
+    return response.end();
+  }
+  db.prepare('INSERT OR IGNORE INTO shopify_paid_orders VALUES (?,?,?)')
+    .run(shop, order.admin_graphql_api_id, order.line_items.length);
+  response.statusCode = 204;
+  return response.end();
+}
 
 function money(value) {
   if (!/^\d{1,7}(\.\d{1,2})?$/.test(value || '')) throw new Error('Enter a valid amount for every cost. Use zero only when applicable.');
@@ -157,7 +238,15 @@ function saveOperation(path, form) {
 
 function page() {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
+  const drafts = new Map(db.prepare('SELECT * FROM shopify_drafts WHERE shop=?').all(shop || '')
+    .map(draft => [draft.candidate_id, draft]));
+  const paidOrders = db.prepare('SELECT * FROM shopify_paid_orders WHERE shop=? ORDER BY rowid DESC LIMIT 30').all(shop || '');
   const cards = rows.map(row => {
+    const draft = drafts.get(row.id);
+    const shopify = draft?.product_gid ? '<p>Shopify draft: ' + escape(draft.product_gid) + '</p>'
+      : draft ? '<p>Draft request pending or needs review. Search Shopify for tradelens-' + row.id + '.</p>'
+      : row.approved && shop && shopToken ? `<form method="post" action="/shopify/draft">
+      <input type="hidden" name="id" value="${row.id}"><button>Create Shopify draft</button></form>` : '';
     const breakEven = row.revenue - row.supplier - row.shipping - row.duties - row.fees - row.losses;
     const contribution = breakEven - row.acquisition;
     const currency = row.market === 'US' ? 'USD' : 'GBP';
@@ -168,6 +257,7 @@ function page() {
       <p>Estimated contribution <strong>${format(contribution)}</strong> · Margin ${(contribution / row.revenue * 100).toFixed(1)}%</p>
       <p>Break-even acquisition cost ${format(breakEven)}</p>
       ${row.approved ? '<strong>Approved for handoff</strong>' : `<form method="post" action="/approve"><input type="hidden" name="id" value="${row.id}"><button>Approve for handoff</button></form>`}
+      ${shopify}
     </article>`;
   }).join('');
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -189,20 +279,24 @@ function page() {
     <label>Evidence notes<textarea name="evidence" required maxlength="1200"></textarea></label></div><button>Save candidate</button></form></section>
     <h2>Candidates</h2>${cards || '<p>No candidates yet.</p>'}
     ${operations(rows)}
+    <section><h2>Shopify paid orders</h2>
+    <p>Recent paid-order notifications. Fulfillment assignment is a separate step.</p>
+    <ul>${paidOrders.map(order => `<li>${escape(order.order_gid)} · ${order.line_count} lines</li>`).join('')}</ul>
+    </section>
     <section><h2>Provider workspace</h2><div class="grid">${Object.entries(providers).map(([name, role]) =>
       `<div><strong>${name}</strong><p>${role}<br><small>Awaiting verified connection</small></p></div>`).join('')}</div></section>
     </main></html>`;
 }
 
-async function readForm(request) {
+async function readBody(request, limit) {
   let size = 0;
   const chunks = [];
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 16000) return null;
+    if (size > limit) return null;
     chunks.push(chunk);
   }
-  return new URLSearchParams(Buffer.concat(chunks).toString());
+  return Buffer.concat(chunks);
 }
 
 createServer(async (request, response) => {
@@ -211,6 +305,12 @@ createServer(async (request, response) => {
   response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
   response.setHeader('X-Content-Type-Options', 'nosniff');
   if (request.method === 'GET' && request.url === '/health') return response.end('ok');
+  if (request.method === 'POST' && request.url === '/shopify/webhooks/orders-paid') {
+    try { return await receivePaidOrder(request, response); } catch {
+      response.statusCode = 500;
+      return response.end('Webhook processing failed.');
+    }
+  }
   const expected = 'Basic ' + Buffer.from('admin:' + password).toString('base64');
   if (password && !timingSafeEqual(digest(request.headers.authorization || ''), digest(expected))) {
     response.writeHead(401, { 'WWW-Authenticate': 'Basic realm="TradeLens", charset="UTF-8"' });
@@ -221,7 +321,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page());
     }
-    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -230,11 +330,12 @@ createServer(async (request, response) => {
       response.statusCode = 403;
       return response.end('Submit the form from the dashboard.');
     }
-    const form = await readForm(request);
-    if (!form) {
+    const raw = await readBody(request, 16000);
+    if (!raw) {
       response.statusCode = 413;
       return response.end('Form too large.');
     }
+    const form = new URLSearchParams(raw.toString());
     if (request.url === '/candidates') {
       const market = required(form, 'market', 2);
       const source = new URL(required(form, 'source', 2048));
@@ -254,7 +355,8 @@ createServer(async (request, response) => {
         return response.end('Candidate not found.');
       }
     }
-    if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
+    if (request.url === '/shopify/draft') await createDraft(required(form, 'id', 36));
+    else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
     response.writeHead(303, { Location: '/' });
     response.end();
   } catch (error) {
