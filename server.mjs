@@ -312,6 +312,68 @@ function scout(row, assessment, badges) {
     <button>Confirm validation</button></form></details>`;
 }
 
+const collections = ['Phone Accessories', 'Charging', 'Desk & Work', 'Smart Living', 'Travel Tech'];
+db.exec(`CREATE TABLE IF NOT EXISTS store_listings (
+  candidate_id TEXT PRIMARY KEY REFERENCES candidates(id), collection TEXT NOT NULL,
+  description TEXT NOT NULL, handle TEXT NOT NULL, shop TEXT NOT NULL,
+  UNIQUE(shop, handle)
+)`);
+
+function updateListing(form) {
+  const id = required(form, 'id', 36);
+  if (form.get('action') === 'remove') {
+    db.prepare('DELETE FROM store_listings WHERE candidate_id=?').run(id);
+    return;
+  }
+  if (!shop || process.env.TRADELENS_DEMO === '1') throw new Error('Configure Shopify in the persistent workspace first.');
+  if (!db.prepare('SELECT id FROM candidates WHERE id=? AND approved IS NOT NULL').get(id)) {
+    throw new Error('Approve the candidate first.');
+  }
+  const collection = required(form, 'collection', 30);
+  const handle = required(form, 'handle', 120);
+  if (!collections.includes(collection) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(handle)) {
+    throw new Error('Choose a collection and enter a valid Shopify product handle.');
+  }
+  db.prepare(`INSERT INTO store_listings VALUES (?,?,?,?,?)
+    ON CONFLICT(candidate_id) DO UPDATE SET collection=excluded.collection,
+    description=excluded.description, handle=excluded.handle, shop=excluded.shop`)
+    .run(id, collection, required(form, 'description', 1000), handle, shop);
+}
+
+function storefront() {
+  const listings = process.env.TRADELENS_DEMO === '1' ? [] : db.prepare(`
+    SELECT l.*, c.name, c.variant FROM store_listings l JOIN candidates c ON c.id=l.candidate_id
+    WHERE l.shop=? AND c.approved IS NOT NULL ORDER BY c.name`).all(shop || '');
+  return `<!doctype html><html lang="en"><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1"><title>TradeLens Store</title>
+    <style>body{font:17px system-ui;background:#101827;color:#eef3ff;margin:0}main{max-width:1040px;margin:auto;padding:40px 20px}
+    h1{font-size:clamp(36px,8vw,72px);margin:.2em 0}a,small{color:#82e6d4}.cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
+    article{padding:20px;border-radius:14px;border:1px solid #34425b;background:#192438}section{margin-top:32px}</style>
+    <main><small>TRADELENS STORE</small><h1>Smart tech for everyday life</h1>
+    <p>Explore innovative gadgets, technology accessories, and smart lifestyle products.</p>
+    ${listings.length ? collections.map(collection => {
+      const products = listings.filter(item => item.collection === collection);
+      if (!products.length) return '';
+      return `<section><h2>${escape(collection)}</h2><div class="cards">${products.map(item =>
+        `<article><h3>${escape(item.name)}</h3><small>${escape(item.variant)}</small><p>${escape(item.description)}</p>
+        <a href="https://${escape(item.shop)}/products/${escape(item.handle)}">View price and availability on Shopify</a></article>`).join('')}</div></section>`;
+    }).join('') : '<p>Products will appear here when the catalog opens.</p>'}</main></html>`;
+}
+
+function listingControls(row, listing) {
+  if (!row.approved || !shop || process.env.TRADELENS_DEMO === '1') return '';
+  return `<details><summary>Buyer storefront listing</summary>
+    <p>Confirm the product is available in your Shopify online store before adding its handle.</p>
+    <form method="post" action="/store/listing"><input type="hidden" name="id" value="${row.id}">
+    <label>Collection<select name="collection">${collections.map(name =>
+      `<option${listing?.collection === name ? ' selected' : ''}>${escape(name)}</option>`).join('')}</select></label>
+    <label>Shopify product handle<input name="handle" required maxlength="120" value="${escape(listing?.handle ?? '')}"></label>
+    <label>Public description<textarea name="description" required maxlength="1000">${escape(listing?.description ?? '')}</textarea></label>
+    <button>Publish to TradeLens storefront</button></form>
+    ${listing ? `<form method="post" action="/store/listing"><input type="hidden" name="id" value="${row.id}">
+    <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
+}
+
 function page() {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
   const assessments = new Map(db.prepare('SELECT * FROM scout_assessments').all()
@@ -329,6 +391,8 @@ function page() {
   const drafts = new Map(db.prepare('SELECT * FROM shopify_drafts WHERE shop=?').all(shop || '')
     .map(draft => [draft.candidate_id, draft]));
   const paidOrders = db.prepare('SELECT * FROM shopify_paid_orders WHERE shop=? ORDER BY rowid DESC LIMIT 30').all(shop || '');
+  const listings = new Map(db.prepare('SELECT * FROM store_listings WHERE shop=?').all(shop || '')
+    .map(item => [item.candidate_id, item]));
   const cards = rows.map(row => {
     const draft = drafts.get(row.id);
     const shopify = draft?.product_gid ? '<p>Shopify draft: ' + escape(draft.product_gid) + '</p>'
@@ -346,6 +410,7 @@ function page() {
       <p>Break-even acquisition cost ${format(breakEven)}</p>
       ${row.approved ? '<strong>Approved for handoff</strong>' : `<form method="post" action="/approve"><input type="hidden" name="id" value="${row.id}"><button>Approve for handoff</button></form>`}
       ${shopify}
+      ${listingControls(row, listings.get(row.id))}
       ${scout(row, assessments.get(row.id), badges.filter(badge => badge.candidate_id === row.id))}
     </article>`;
   }).join('');
@@ -357,7 +422,7 @@ function page() {
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:14px}
     input,select,textarea,button{font:inherit;border-radius:7px;padding:10px;border:1px solid #50627e}
     input,select,textarea{width:100%;background:#111b2c;color:#fff}button{background:#82e6d4;color:#102128;cursor:pointer;font-weight:700;margin-top:12px}
-    </style><main><header><small>ACL SMART SOLUTIONS LTD</small><h1>TradeLens</h1><p>Product research and approval workspace</p>${process.env.TRADELENS_DEMO === '1' ? '<p><strong>Demo workspace.</strong> Sample figures are synthetic. Changes reset on restart.</p>' : ''}</header>
+    </style><main><header><small>ACL SMART SOLUTIONS LTD</small><h1>TradeLens</h1><p>Product research and approval workspace · <a href="/store">Open buyer storefront</a></p>${process.env.TRADELENS_DEMO === '1' ? '<p><strong>Demo workspace.</strong> Sample figures are synthetic. Changes reset on restart.</p>' : ''}</header>
     <section><h2>Add candidate</h2><p>Use USD for US, GBP for UK, KES for Kenya and NGN for Nigeria. Enter per-order amounts and cite your supporting evidence.</p>
     <form method="post" action="/candidates"><div class="grid">
     <label>Product<input name="name" required maxlength="120"></label>
@@ -407,6 +472,10 @@ createServer(async (request, response) => {
       return response.end('Webhook processing failed.');
     }
   }
+  if (request.method === 'GET' && request.url === '/store') {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return response.end(storefront());
+  }
   const expected = 'Basic ' + Buffer.from('admin:' + password).toString('base64');
   if (password && !timingSafeEqual(digest(request.headers.authorization || ''), digest(expected))) {
     response.writeHead(401, { 'WWW-Authenticate': 'Basic realm="TradeLens", charset="UTF-8"' });
@@ -417,7 +486,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page());
     }
-    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -455,6 +524,7 @@ createServer(async (request, response) => {
       }
     }
     if (request.url === '/shopify/draft') await createDraft(required(form, 'id', 36));
+    else if (request.url === '/store/listing') updateListing(form);
     else if (request.url.startsWith('/scout/')) recordScout(request.url, form);
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
     response.writeHead(303, { Location: '/' });
