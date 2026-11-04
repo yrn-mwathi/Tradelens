@@ -12,7 +12,7 @@ TradeLens combines a public gadget storefront with an approval-led merchant work
 TRADELENS_DEMO=1 HOST=0.0.0.0 TRADELENS_PASSWORD='change-this-demo-password-to-a-long-random-value' node server.mjs
 ```
 
-4. Open forwarded port **3000** (keep the port private). The public storefront is `/`. Merchant pages include `/admin`, `/admin/engine`, `/admin/supply`, `/admin/evidence` and `/admin/launch`.
+4. Open forwarded port **3000** (keep the port private). The public storefront is `/`. Merchant pages include `/admin`, `/admin/engine`, `/admin/supply`, `/admin/evidence` and `/admin/launch` and `/admin/shopify`.
 
 Preview mode uses **eight synthetic product concepts** with illustrative prices and vector artwork. It has working category navigation, keyword search, sort options, gift/work/travel discovery links and individual product detail pages. It does **not** accept payments or imply live supplier stock.
 
@@ -60,3 +60,7 @@ Run `node --check commerce.mjs` and `node --check server.mjs` under Node 24+. Th
 ## Combined international launch work
 
 See [the unified release plan](docs/UNIFIED_LAUNCH.md). The International admin workspace now records source-linked landed-profit scenarios for US (USD) and UK (GBP), including shipping, advertising, fees, duties and refunds. These are **manual assumptions**, not live provider quotations or automatic tax calculations. The Shopify and supplier integration gates in the plan remain to be implemented and tested before launch.
+
+### Shopify catalog synchronization
+
+In persistent mode, set `SHOPIFY_SHOP` and `SHOPIFY_ADMIN_TOKEN` with `read_products` permission, then open `/admin/shopify` and choose **Sync Shopify catalog**. The snapshot imports up to 250 products, with up to 50 variants per product; larger catalogs or products with more variants fail without replacing the previous snapshot. It stores Shopify product/variant IDs, SKUs, prices, status, inventory quantities and image URLs in SQLite. This is a **read-only snapshot** and does not automatically publish to the TradeLens storefront or trigger fulfillment. Shopify prices are in the shop currency; no conversion is assumed.
