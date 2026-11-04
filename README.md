@@ -73,3 +73,7 @@ In persistent mode, set `SHOPIFY_SHOP` and `SHOPIFY_ADMIN_TOKEN` with `read_prod
 4. A listing is rejected when the variant is absent from the last snapshot, not ACTIVE, out of stock (where tracked), has a mismatched price, or has an image URL inconsistent with the synced image. The snapshot is not live stock validation; keep Shopify checkout as the final availability authority.
 
 Do not publish a product unless the Shopify shop currency matches the candidate market currency. This release does not perform FX conversion or cross-border tax calculation.
+
+### Supplier connection health
+
+Set `PRINTIFY_API_TOKEN` and/or `CJ_ACCESS_TOKEN` in the server environment (never commit tokens). Open `/admin/suppliers` and click the corresponding read-only connection check. A successful check confirms the credential was accepted for the requested read operation; it does **not** verify order submission permissions, stock, shipping rates, or supplier fulfillment readiness. The CJ check uses the CJ product-list API endpoint and requires a valid CJ access token. Neither check places orders.
