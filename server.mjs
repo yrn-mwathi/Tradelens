@@ -362,6 +362,8 @@ function updateListing(form) {
     throw new Error('Choose an ACTIVE variant from the synchronized Shopify catalog. Sync the catalog first.');
   }
   if (cached.inventory !== null && cached.inventory <= 0) throw new Error('Shopify snapshot shows no stock for this variant.');
+  const candidatePrice = db.prepare('SELECT revenue FROM candidates WHERE id=?').get(id).revenue;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(cached.price) || Math.round(Number(cached.price)*100) !== candidatePrice) throw new Error('Candidate selling price must match the synchronized Shopify variant price; confirm Shopify shop currency matches candidate market.');
   if (photo && photo !== cached.image_url) throw new Error('Use the synchronized Shopify image or leave the photo blank.');
   db.prepare(`INSERT INTO store_listings
     (candidate_id,collection,description,handle,shop,photo,compatibility,variant_id) VALUES (?,?,?,?,?,?,?,?)
