@@ -319,6 +319,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS store_listings (
   UNIQUE(shop, handle)
 )`);
 
+const listingColumns = db.prepare('PRAGMA table_info(store_listings)').all();
+for (const column of ['photo', 'compatibility', 'variant_id']) {
+  if (!listingColumns.some(item => item.name === column)) {
+    db.exec('ALTER TABLE store_listings ADD COLUMN ' + column + ' TEXT');
+  }
+}
+
 function updateListing(form) {
   const id = required(form, 'id', 36);
   if (form.get('action') === 'remove') {
@@ -334,10 +341,20 @@ function updateListing(form) {
   if (!collections.includes(collection) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(handle)) {
     throw new Error('Choose a collection and enter a valid Shopify product handle.');
   }
-  db.prepare(`INSERT INTO store_listings VALUES (?,?,?,?,?)
+  const photo = form.get('photo')?.trim() || null;
+  const compatibility = form.get('compatibility')?.trim() || null;
+  const variantId = form.get('variant_id')?.trim() || null;
+  if (photo && (photo.length > 2048 || !/^https:\/\/cdn[.]shopify[.]com\/[^\s]+$/.test(photo))) {
+    throw new Error('Use an HTTPS product photo hosted on cdn.shopify.com.');
+  }
+  if (compatibility && compatibility.length > 400) throw new Error('Compatibility details exceed 400 characters.');
+  if (variantId && !/^[1-9][0-9]{0,19}$/.test(variantId)) throw new Error('Enter a numeric Shopify variant ID.');
+  db.prepare(`INSERT INTO store_listings
+    (candidate_id,collection,description,handle,shop,photo,compatibility,variant_id) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(candidate_id) DO UPDATE SET collection=excluded.collection,
-    description=excluded.description, handle=excluded.handle, shop=excluded.shop`)
-    .run(id, collection, required(form, 'description', 1000), handle, shop);
+    description=excluded.description, handle=excluded.handle, shop=excluded.shop,
+    photo=excluded.photo, compatibility=excluded.compatibility, variant_id=excluded.variant_id`)
+    .run(id, collection, required(form, 'description', 1000), handle, shop, photo, compatibility, variantId);
 }
 
 const previewCatalog = [
@@ -371,16 +388,16 @@ function storefront(url) {
   const detail = listings.find(item => item.candidate_id === url.searchParams.get('product'));
   const featured = listings.find(item => item.collection === 'Desk & Work') || listings[0];
   const visible = listings.filter(item => (!selected || item.collection === selected) &&
-    [item.name, item.variant, item.description, item.collection].join(' ').toLowerCase().includes(query.toLowerCase()));
+    [item.name, item.variant, item.description, item.collection, item.compatibility].join(' ').toLowerCase().includes(query.toLowerCase()));
   const productLink = item => '/?product=' + encodeURIComponent(item.candidate_id);
-  const artwork = item => `<div class="art tone${collections.indexOf(item.collection)}">${productArt(item.collection)}</div>`;
+  const artwork = item => `<div class="art tone${collections.indexOf(item.collection)}">${item.photo ? `<img src="${escape(item.photo)}" alt="${escape(item.name)}" width="480" height="360">` : productArt(item.collection)}</div>`;
   return `<!doctype html><html lang="en"><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1"><title>TradeLens | Tech &amp; everyday carry</title>
     <style>
     *{box-sizing:border-box}body{margin:0;background:#fcfaf6;color:#211e25;font:16px system-ui}
     main,nav{max-width:1280px;margin:auto;padding:0 24px}a{color:inherit}nav{display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding-block:18px}nav strong{font-size:26px;letter-spacing:-1px}nav form{margin-left:auto;display:flex;gap:6px}input,button{font:inherit;padding:9px;border:1px solid #9a909e;border-radius:7px;min-width:0}button{cursor:pointer}
     .strip{background:#221d2b;color:white;text-align:center;padding:9px;font-size:13px}.hero,.detail{display:grid;grid-template-columns:1fr 1fr;background:#eae3f8;border-radius:24px;overflow:hidden}.copy{padding:clamp(22px,5vw,72px)}h1{font-size:clamp(38px,6vw,82px);line-height:1;margin:.25em 0;letter-spacing:-.05em}
-    .action{display:inline-block;background:#241a33;color:white;padding:12px 18px;border-radius:8px;text-decoration:none}.eyebrow{font-size:12px;letter-spacing:.13em;font-weight:750}.art{display:grid;place-items:center;min-height:180px;background:#eae3f8}.art svg{width:min(100%,340px);filter:drop-shadow(8px 12px 9px #231e3740)}.tone1{background:#f1dbf1}.tone2{background:#dce2fa}.tone3{background:#dcead9}.tone4{background:#dce8ea}
+    .action{display:inline-block;background:#241a33;color:white;padding:12px 18px;border-radius:8px;text-decoration:none}.eyebrow{font-size:12px;letter-spacing:.13em;font-weight:750}.art{display:grid;place-items:center;min-height:180px;background:#eae3f8}.hero>a{display:grid}.art img{width:100%;height:100%;max-height:440px;object-fit:cover}.card .art img{aspect-ratio:4/3}.art svg{width:min(100%,340px);filter:drop-shadow(8px 12px 9px #231e3740)}.tone1{background:#f1dbf1}.tone2{background:#dce2fa}.tone3{background:#dcead9}.tone4{background:#dce8ea}
     .chips{display:flex;flex-wrap:wrap;gap:8px}.chips a{border:1px solid #ada3b4;border-radius:30px;padding:8px 14px;text-decoration:none}.chips a[aria-current]{background:#241a33;color:white}
     section{margin:36px 0}.cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,215px),1fr))}.card{border:1px solid #ddd6df;border-radius:16px;overflow:hidden;background:white;text-decoration:none}.card:hover,.card:focus-visible{outline:2px solid #624689}.card div:last-child{padding:16px}.card h3{margin:.35em 0}.note{padding:12px;background:#f0e9da;border-radius:8px}footer{padding:28px 0;color:#514956}
     @media(max-width:640px){.hero,.detail{grid-template-columns:1fr}nav form{margin-left:0;width:100%}nav input{flex:1}}
@@ -390,8 +407,8 @@ function storefront(url) {
     <main>${demo ? '<p class="note">Preview catalog · Illustrated concepts for exploring the store.</p>' : ''}
     ${detail ? `<section class="detail">${artwork(detail)}<div class="copy"><a href="/#discover">← Back to discover</a>
     <p class="eyebrow">${escape(detail.collection)}</p><h1>${escape(detail.name)}</h1><p>${escape(detail.variant)}</p>
-    <p>${escape(detail.description)}</p>${demo ? '<p>Preview product · Checkout unavailable</p>' :
-      `<a class="action" href="https://${escape(detail.shop)}/products/${escape(detail.handle)}">View on Shopify</a>`}</div></section>`
+    <p>${escape(detail.description)}</p>${detail.compatibility ? `<p><strong>Compatibility</strong><br>${escape(detail.compatibility)}</p>` : ''}${demo ? '<p>Preview product · Checkout unavailable</p>' :
+      `<a class="action" href="https://${escape(detail.shop)}/products/${escape(detail.handle)}">View on Shopify</a>${detail.variant_id ? ` <a class="action" href="https://${escape(detail.shop)}/cart/${escape(detail.variant_id)}:1">Buy this variant</a>` : ''}`}</div></section>`
     : `<header class="hero"><div class="copy"><span class="eyebrow">THE EVERYDAY TECH EDIT</span>
     <h1>Upgrade your everyday.</h1><p>Discover clever accessories for your phone, desk, home and travels.</p>
     <a class="action" href="#discover">Explore the collection →</a></div>
@@ -415,6 +432,9 @@ function listingControls(row, listing) {
       `<option${listing?.collection === name ? ' selected' : ''}>${escape(name)}</option>`).join('')}</select></label>
     <label>Shopify product handle<input name="handle" required maxlength="120" value="${escape(listing?.handle ?? '')}"></label>
     <label>Public description<textarea name="description" required maxlength="1000">${escape(listing?.description ?? '')}</textarea></label>
+    <label>Shopify CDN photo URL<input name="photo" type="url" maxlength="2048" value="${escape(listing?.photo ?? '')}"></label>
+    <label>Compatibility and supported models<textarea name="compatibility" maxlength="400">${escape(listing?.compatibility ?? '')}</textarea></label>
+    <label>Shopify variant ID for Buy this variant<input name="variant_id" inputmode="numeric" maxlength="20" value="${escape(listing?.variant_id ?? '')}"></label>
     <button>Publish to TradeLens storefront</button></form>
     ${listing ? `<form method="post" action="/store/listing"><input type="hidden" name="id" value="${row.id}">
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
@@ -515,7 +535,7 @@ async function readBody(request, limit) {
 createServer(async (request, response) => {
   response.setHeader('Content-Type', 'text/plain; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
-  response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+  response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src https://cdn.shopify.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
   response.setHeader('X-Content-Type-Options', 'nosniff');
   if (request.method === 'GET' && request.url === '/health') return response.end('ok');
   if (request.method === 'POST' && request.url === '/shopify/webhooks/orders-paid') {
