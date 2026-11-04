@@ -26,6 +26,8 @@ jobs:
           node --check cj-catalog.mjs
           node --check shipping-evidence.mjs
           node --check server.mjs
+      - name: Run supplier fulfillment regression tests
+        run: node --test tests/*.test.mjs
       - name: Smoke test demo storefront and merchant authentication
         shell: bash
         run: |
