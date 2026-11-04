@@ -1,0 +1,36 @@
+name: TradeLens preview checks
+on:
+  push:
+    branches: [main, feat/international-commerce-preview]
+  pull_request:
+    branches: [main]
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check module syntax
+        run: |
+          node --check commerce.mjs
+          node --check server.mjs
+      - name: Smoke test demo storefront and merchant authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRADELENS_DEMO=1 HOST=127.0.0.1 PORT=3000 TRADELENS_PASSWORD='a-long-strong-demo-only-password' node server.mjs > /tmp/tradelens.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true; cat /tmp/tradelens.log' EXIT
+          for i in {1..25}; do
+            curl -fsS http://127.0.0.1:3000/health >/dev/null && break || sleep 1
+          done
+          curl -fsS http://127.0.0.1:3000/ | grep -q 'Shop by what you love'
+          curl -fsS 'http://127.0.0.1:3000/?category=Charging' | grep -q 'Halo Charging Dock'
+          curl -fsS 'http://127.0.0.1:3000/?finder=travel' | grep -q 'Nomad Tech Pouch'
+          curl -fsS 'http://127.0.0.1:3000/?q=controller' | grep -q 'Arc Game Controller'
+          curl -fsS 'http://127.0.0.1:3000/?product=case' | grep -q 'Compatibility'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/admin)" = "401"
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin | grep -q 'TradeLens Scout'
