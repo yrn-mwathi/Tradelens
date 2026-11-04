@@ -27,6 +27,10 @@ export function stageFulfillment(db,form,shop){
  if(!matched?.quantity)throw new Error('The verified paid order does not contain this candidate’s Shopify variant. Older orders must be reverified before staging.');
  const mapping=db.prepare('SELECT * FROM catalog_mappings WHERE candidate_id=?').get(candidate);
  if(!mapping||mapping.provider!==provider||mapping.stock<matched.quantity)throw new Error('Supplier mapping must have enough stock for the verified ordered quantity.');
+ if(provider==='CJDropshipping'){
+  const evidence=db.prepare('SELECT COUNT(*) AS n FROM cj_catalog_snapshot WHERE sku=? AND fetched_at>=?').get(mapping.sku,new Date(Date.now()-86400000).toISOString());
+  if(evidence.n!==1)throw new Error('CJ supplier SKU must have exactly one fresh catalog match. Product availability and stock still require manual confirmation.');
+ }
  if(provider==='Printify'){
   const snapshot=db.prepare('SELECT * FROM printify_catalog_snapshot WHERE sku=? AND enabled=1 AND available=1 ORDER BY fetched_at DESC LIMIT 1').get(mapping.sku);
   if(!snapshot)throw new Error('Printify supplier SKU must appear as enabled and available in a synchronized catalog.');

@@ -16,6 +16,10 @@ export function previewSupplierDispatch(db,form,shop){
  if(!mapping||!listing||mapping.provider!==q.provider)throw new Error('Supplier mapping changed. Review again.');
  const line=db.prepare('SELECT SUM(quantity) AS quantity FROM shopify_paid_order_lines WHERE shop=? AND order_gid=? AND variant_id=?').get(shop,q.order_gid,listing.variant_id);
  if(!line?.quantity||mapping.stock<line.quantity)throw new Error('Paid order quantity or supplier stock no longer validates.');
+ if(q.provider==='CJDropshipping'){
+  const evidence=db.prepare('SELECT COUNT(*) AS n FROM cj_catalog_snapshot WHERE sku=? AND fetched_at>=?').get(mapping.sku,new Date(Date.now()-86400000).toISOString());
+  if(evidence.n!==1)throw new Error('CJ supplier SKU must have exactly one fresh catalog match before dispatch preview.');
+ }
  if(q.provider==='Printify'){
   const snapshot=db.prepare('SELECT * FROM printify_catalog_snapshot WHERE sku=? AND enabled=1 AND available=1 ORDER BY fetched_at DESC LIMIT 1').get(mapping.sku);
   if(!snapshot||Date.now()-Date.parse(snapshot.fetched_at)>24*60*60*1000)throw new Error('Refresh the available Printify SKU catalog before preparing dispatch.');
