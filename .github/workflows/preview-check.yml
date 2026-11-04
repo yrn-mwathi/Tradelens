@@ -22,6 +22,7 @@ jobs:
           node --check fulfillment.mjs
           node --check supplier-dispatch.mjs
           node --check supplier-health.mjs
+          node --check printify-catalog.mjs
           node --check server.mjs
       - name: Smoke test demo storefront and merchant authentication
         shell: bash
@@ -47,3 +48,4 @@ jobs:
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/fulfillment | grep -q 'Fulfillment review queue'
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/dispatch | grep -q 'Supplier dispatch previews'
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/suppliers | grep -q 'Supplier connection health'
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/printify | grep -q 'Printify catalog snapshot'
