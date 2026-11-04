@@ -1,6 +1,8 @@
 const esc = x => String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 export function initializeFulfillment(db){
  db.exec(`CREATE TABLE IF NOT EXISTS shopify_paid_order_lines(shop TEXT NOT NULL, order_gid TEXT NOT NULL, line_id TEXT NOT NULL, variant_id TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>0), PRIMARY KEY(shop,order_gid,line_id));`);
+ // Backfill older verified webhooks that persisted REST numeric variant IDs.
+ db.prepare("UPDATE shopify_paid_order_lines SET variant_id='gid://shopify/ProductVariant/' || variant_id WHERE variant_id GLOB '[1-9]*' AND variant_id NOT GLOB '*[^0-9]*'").run();
  db.exec(`CREATE TABLE IF NOT EXISTS fulfillment_queue(
  id TEXT PRIMARY KEY, shop TEXT NOT NULL, order_gid TEXT NOT NULL,
  provider TEXT NOT NULL, candidate_id TEXT NOT NULL,
