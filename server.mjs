@@ -357,6 +357,12 @@ function updateListing(form) {
   }
   if (compatibility && compatibility.length > 400) throw new Error('Compatibility details exceed 400 characters.');
   if (variantId && !/^[1-9][0-9]{0,19}$/.test(variantId)) throw new Error('Enter a numeric Shopify variant ID.');
+  const cached = db.prepare('SELECT * FROM shopify_catalog_snapshot WHERE shop=? AND handle=? AND variant_gid=?').get(shop,handle,'gid://shopify/ProductVariant/'+variantId);
+  if (!variantId || !cached || cached.status !== 'ACTIVE') {
+    throw new Error('Choose an ACTIVE variant from the synchronized Shopify catalog. Sync the catalog first.');
+  }
+  if (cached.inventory !== null && cached.inventory <= 0) throw new Error('Shopify snapshot shows no stock for this variant.');
+  if (photo && photo !== cached.image_url) throw new Error('Use the synchronized Shopify image or leave the photo blank.');
   db.prepare(`INSERT INTO store_listings
     (candidate_id,collection,description,handle,shop,photo,compatibility,variant_id) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(candidate_id) DO UPDATE SET collection=excluded.collection,
@@ -442,7 +448,8 @@ function listingControls(row, listing) {
     <label>Public description<textarea name="description" required maxlength="1000">${escape(listing?.description ?? '')}</textarea></label>
     <label>Shopify CDN photo URL<input name="photo" type="url" maxlength="2048" value="${escape(listing?.photo ?? '')}"></label>
     <label>Compatibility and supported models<textarea name="compatibility" maxlength="400">${escape(listing?.compatibility ?? '')}</textarea></label>
-    <label>Shopify variant ID for Buy this variant<input name="variant_id" inputmode="numeric" maxlength="20" value="${escape(listing?.variant_id ?? '')}"></label>
+    <label>Shopify variant (synced ACTIVE catalog)<select name="variant_id" required><option value="">Select synchronized variant</option>${db.prepare("SELECT variant_gid,title,variant_title,handle,inventory FROM shopify_catalog_snapshot WHERE shop=? AND status='ACTIVE' ORDER BY title LIMIT 250").all(shop).map(v=>`<option value="${escape(v.variant_gid.split('/').at(-1))}"${listing?.variant_id === v.variant_gid.split('/').at(-1) ? ' selected' : ''}>${escape(v.title)} — ${escape(v.variant_title)} (${escape(v.handle)}) · stock ${escape(v.inventory ?? 'untracked')}</option>`).join('')}</select></label>
+    <p>The selected variant's Shopify handle must match the handle above. Sync the catalog first in Shopify catalog.</p>
     <button>Publish to TradeLens storefront</button></form>
     ${listing ? `<form method="post" action="/store/listing"><input type="hidden" name="id" value="${row.id}">
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
