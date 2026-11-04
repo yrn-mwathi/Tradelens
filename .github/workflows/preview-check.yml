@@ -18,6 +18,7 @@ jobs:
           node --check commerce.mjs
           node --check evidence.mjs
           node --check launch.mjs
+          node --check shopify-catalog.mjs
           node --check server.mjs
       - name: Smoke test demo storefront and merchant authentication
         shell: bash
@@ -39,3 +40,4 @@ jobs:
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/evidence | grep -q 'Research evidence ledger'
 
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/launch | grep -q 'US / UK landed profitability'
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/shopify | grep -q 'Shopify catalog snapshot'
