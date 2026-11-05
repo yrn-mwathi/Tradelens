@@ -17,7 +17,7 @@ export async function checkSupplierConnection(db,form){
  }else if(provider==='CJDropshipping'){
   const token=process.env.CJ_ACCESS_TOKEN;
   if(!token)throw new Error('Set CJ_ACCESS_TOKEN before checking CJ.');
-  url='https://developers.cjdropshipping.com/api2.0/v1/product/list?pageNum=1&pageSize=1';
+  url='https://developers.cjdropshipping.com/api2.0/v1/product/listV2?page=1&size=1';
   headers={'CJ-Access-Token':token};
  }else throw new Error('Unsupported supplier.');
  let status='failed',message='Connection failed';

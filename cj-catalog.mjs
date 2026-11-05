@@ -1,3 +1,4 @@
+import {fetchCjPage} from './discovery.mjs';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 export function initializeCjCatalog(db){
  db.exec(`CREATE TABLE IF NOT EXISTS cj_catalog_snapshot(
@@ -11,21 +12,10 @@ export async function syncCjCatalog(db){
  if(!token)throw new Error('Set CJ_ACCESS_TOKEN first.');
  const rows=[];
  for(let page=1;page<=10;page++){
-  const url='https://developers.cjdropshipping.com/api2.0/v1/product/list?pageNum='+page+'&pageSize=100';
-  const response=await fetch(url,{headers:{'CJ-Access-Token':token},redirect:'error',signal:AbortSignal.timeout(15000)});
-  if(!response.ok)throw new Error('CJ catalog returned HTTP '+response.status);
-  const body=await response.json();
-  if(body.code!==200&&body.code!=='200')throw new Error('CJ catalog request rejected.');
-  const data=body.data;
-  const products=Array.isArray(data?.list)?data.list:Array.isArray(data)?data:null;
-  if(!products)throw new Error('Unexpected CJ catalog response; existing snapshot unchanged.');
-  for(const p of products){
-   const productId=String(p.pid||p.id||'');
-   const sku=String(p.productSku||p.sku||'').trim();
-   if(!productId||!sku)continue;
-   rows.push([productId,sku,String(p.productNameEn||p.productName||'').slice(0,240),String(p.sellPrice||p.productPrice||'').slice(0,60),new Date().toISOString()]);
-  }
-  if(products.length<100)break;
+  const result=await fetchCjPage({token,page,size:100,trending:false});
+  const products=result.products;
+  for(const p of products) rows.push([p.id,p.sku,p.name,p.price,new Date().toISOString()]);
+  if(page>=result.totalPages || products.length<100)break;
   if(page===10)throw new Error('CJ catalog exceeds 1000-product safety limit; existing snapshot unchanged.');
  }
  db.exec('BEGIN');
