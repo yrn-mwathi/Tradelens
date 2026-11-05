@@ -1,3 +1,6 @@
+import {initializeAutomation, runAutomation, deliverAlerts, automationWorkspace} from './automation.mjs';
+import {initializeDiscovery, discoverCj, promoteDiscovery, quoteCjFreight, discoveryWorkspace} from './discovery.mjs';
+import {initializeStorePerformance, syncStorePerformance, syncAdvertising, mapAdvertising, performanceWorkspace} from './store-performance.mjs';
 import { initializeIntelligence, generateBriefing, saveIntelligence, runIntelligence, intelligenceWorkspace } from './intelligence.mjs';
 import { initializeShippingEvidence, saveShippingEvidence, shippingEvidenceWorkspace } from './shipping-evidence.mjs';
 import { initializeCjCatalog, syncCjCatalog, cjCatalogWorkspace } from './cj-catalog.mjs';
@@ -13,6 +16,10 @@ import { createServer } from 'node:http';
 import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
+if(process.env.TRADELENS_DEMO==='1'){
+ for(const key of ['SHOPIFY_SHOP','SHOPIFY_ADMIN_TOKEN','SHOPIFY_WEBHOOK_SECRET','CJ_ACCESS_TOKEN','PRINTIFY_API_TOKEN','META_ADS_TOKEN','META_AD_ACCOUNT_ID','OPENAI_API_KEY','RESEND_API_KEY'])delete process.env[key];
+ process.env.TRADELENS_AUTOMATION='0';
+}
 const password = process.env.TRADELENS_PASSWORD;
 const host = process.env.HOST || '127.0.0.1';
 if (host !== '127.0.0.1' && (!password || password.length < 20)) {
@@ -28,6 +35,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS candidates (
 )`);
 
 initializeIntelligence(db);
+initializeAutomation(db);
+initializeDiscovery(db);
+initializeStorePerformance(db);
 initializeEvidence(db);
 initializeLaunch(db);
 initializeShopifyCatalog(db);
@@ -159,7 +169,7 @@ async function receivePaidOrder(request, response) {
     const lineId = String(line.id ?? '');
     const variantId = String(line.variant_id ?? '');
     const quantity = line.quantity;
-    if (!/^[1-9]\\d*$/.test(lineId) || !/^[1-9]\\d*$/.test(variantId) ||
+    if (!/^[1-9]\d*$/.test(lineId) || !/^[1-9]\d*$/.test(variantId) ||
         !Number.isSafeInteger(quantity) || quantity < 1) return null;
     return [shop,order.admin_graphql_api_id,lineId,'gid://shopify/ProductVariant/'+variantId,quantity];
   }).filter(Boolean);
@@ -322,10 +332,14 @@ function recordScout(path, form) {
   if (path === '/scout/validation') {
     const badge = required(form, 'badge', 30);
     if (!validations.includes(badge)) throw new Error('Choose a validation type.');
+    if (badge === 'Physically Tested') {
+      const date=form.get('test_date')||'';
+      if(form.get('physical_confirm')!=='yes'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date||date>recorded.slice(0,10)) throw new Error('Physical testing requires an explicit human confirmation and valid completed test date.');
+    }
     db.prepare(`INSERT INTO scout_validations VALUES (?,?,?,?,?)
       ON CONFLICT(candidate_id,badge) DO UPDATE SET reviewer=excluded.reviewer,
       evidence=excluded.evidence, recorded=excluded.recorded`)
-      .run(id, badge, required(form, 'reviewer', 120), evidence, recorded);
+      .run(id, badge, required(form, 'reviewer', 120), badge==='Physically Tested'?'Sample test date '+form.get('test_date')+'. '+evidence:evidence, recorded);
     return;
   }
   const inputs = Object.keys(factors).map(key => count(form, key, 0));
@@ -348,7 +362,7 @@ function scout(row, assessment, badges) {
     <ul>${badges.map(badge => `<li>${escape(badge.badge)} · ${escape(badge.reviewer)} · ${escape(badge.recorded.slice(0,10))} · ${escape(badge.evidence)}</li>`).join('')}</ul>
     <form method="post" action="/scout/validation"><input type="hidden" name="id" value="${row.id}">
     <div class="grid"><label>Validation<select name="badge">${validations.map(value => `<option>${value}</option>`).join('')}</select></label>
-    <label>Reviewer or sample tester<input name="reviewer" maxlength="120" required></label>
+    <label>Physical test date (required only for Physically Tested)<input name="test_date" type="date"></label><label><span>I personally confirm a real sample was physically tested (required only for Physically Tested)</span><input name="physical_confirm" type="checkbox" value="yes"></label><label>Reviewer or sample tester<input name="reviewer" maxlength="120" required></label>
     <label>Evidence and results (include sample test date for physical testing)<textarea name="evidence" maxlength="1200" required></textarea></label></div>
     <button>Confirm validation</button></form></details>`;
 }
@@ -490,7 +504,7 @@ function listingControls(row, listing) {
     <button name="action" value="remove">Remove from storefront</button></form>` : ''}</details>`;
 }
 
-const workspaces = { '/admin/intelligence': 'Product Intelligence', '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International', '/admin/shopify': 'Shopify catalog', '/admin/fulfillment': 'Fulfillment', '/admin/dispatch': 'Dispatch previews', '/admin/suppliers': 'Supplier connections', '/admin/printify': 'Printify catalog', '/admin/cj': 'CJ catalog', '/admin/shipping': 'Shipping evidence' };
+const workspaces = { '/admin/connections': 'Live connections', '/admin/discovery': 'Discovery inbox', '/admin/performance': 'Live performance', '/admin/intelligence': 'Product Intelligence', '/admin': 'Scout', '/admin/engine': 'Engine', '/admin/supply': 'Supply', '/admin/evidence': 'Evidence', '/admin/launch': 'International', '/admin/shopify': 'Shopify catalog', '/admin/fulfillment': 'Fulfillment', '/admin/dispatch': 'Dispatch previews', '/admin/suppliers': 'Supplier connections', '/admin/printify': 'Printify catalog', '/admin/cj': 'CJ catalog', '/admin/shipping': 'Shipping evidence' };
 
 function page(path) {
   const rows = db.prepare('SELECT * FROM candidates ORDER BY created DESC').all();
@@ -561,6 +575,9 @@ function page(path) {
     ${path === '/admin/engine' ? `<section><h2>Store catalog</h2>
     <p>${shop ? 'Manage approved products and Shopify handoff.' : 'Set SHOPIFY_SHOP to enable storefront listing controls.'}</p>
     ${cards || '<p>Approve a candidate in Scout to bring it into the catalog.</p>'}</section>` : ''}
+    ${path === '/admin/connections' ? automationWorkspace(db) : ''}
+    ${path === '/admin/discovery' ? discoveryWorkspace(db) : ''}
+    ${path === '/admin/performance' ? performanceWorkspace(db,shop) : ''}
     ${path === '/admin/intelligence' ? intelligenceWorkspace(db) : ''}
     ${path === '/admin/evidence' ? evidenceWorkspace(db) : ''}
     ${path === '/admin/launch' ? launchWorkspace(db) : ''}
@@ -597,9 +614,18 @@ function refreshDailyIntelligence() {
   if (!latest || Date.now()-Date.parse(latest.ran_at)>=86400000) runIntelligence(db);
 }
 refreshDailyIntelligence();
-setInterval(() => { try { refreshDailyIntelligence(); } catch { console.error('Daily intelligence report failed; previous report retained.'); } },60000).unref();
+let automationRunning=false;
+async function automationTick(){
+ if(automationRunning)return;automationRunning=true;
+ try {
+  if(process.env.TRADELENS_AUTOMATION==='1') await runAutomation(db);
+  else refreshDailyIntelligence();
+ } catch { console.error('Automation cycle failed; inspect Live connections.'); }
+ finally {automationRunning=false;}
+}
+setInterval(automationTick,60000).unref();
 
-createServer(async (request, response) => {
+const server=createServer(async (request, response) => {
   response.setHeader('Content-Type', 'text/plain; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src https://cdn.shopify.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
@@ -630,7 +656,7 @@ createServer(async (request, response) => {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       return response.end(page(request.url));
     }
-    if (request.method !== 'POST' || !['/intelligence/briefing','/intelligence/run','/intelligence/signal','/intelligence/performance','/intelligence/ack','/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario','/shopify/catalog-sync','/fulfillment/stage','/dispatch/preview','/suppliers/check','/printify/sync','/cj/sync','/shipping/evidence'].includes(request.url)) {
+    if (request.method !== 'POST' || !['/live/discover','/live/promote','/live/freight','/live/sales','/live/ads','/live/ad-map','/live/cycle','/live/alerts','/intelligence/briefing','/intelligence/run','/intelligence/signal','/intelligence/performance','/intelligence/ack','/candidates','/approve','/leads','/catalog','/orders','/tracking','/shopify/draft','/scout/assessment','/scout/validation','/store/listing','/research/evidence','/research/supplier-review','/launch/scenario','/shopify/catalog-sync','/fulfillment/stage','/dispatch/preview','/suppliers/check','/printify/sync','/cj/sync','/shipping/evidence'].includes(request.url)) {
       response.statusCode = 404;
       return response.end('Not found');
     }
@@ -667,7 +693,15 @@ createServer(async (request, response) => {
         return response.end('Candidate not found.');
       }
     }
-    if (request.url === '/intelligence/briefing') await generateBriefing(db);
+    if (request.url === '/live/discover') await discoverCj(db);
+    else if (request.url === '/live/promote') promoteDiscovery(db,form);
+    else if (request.url === '/live/freight') await quoteCjFreight(db,form);
+    else if (request.url === '/live/sales') await syncStorePerformance(db);
+    else if (request.url === '/live/ads') await syncAdvertising(db);
+    else if (request.url === '/live/ad-map') mapAdvertising(db,form);
+    else if (request.url === '/live/cycle') await runAutomation(db,{force:true});
+    else if (request.url === '/live/alerts') await deliverAlerts(db);
+    else if (request.url === '/intelligence/briefing') await generateBriefing(db);
     else if (request.url === '/intelligence/run') runIntelligence(db);
     else if (request.url === '/intelligence/ack') db.prepare('UPDATE intelligence_alerts SET acknowledged_at=COALESCE(acknowledged_at,?) WHERE id=?').run(new Date().toISOString(),required(form,'alert_id',36));
     else if (['/intelligence/signal','/intelligence/performance'].includes(request.url)) saveIntelligence(db,request.url,form);
@@ -684,7 +718,7 @@ createServer(async (request, response) => {
     else if (request.url === '/cj/sync') await syncCjCatalog(db);
     else if (request.url === '/shipping/evidence') saveShippingEvidence(db,form);
     else if (!['/candidates', '/approve'].includes(request.url)) saveOperation(request.url, form);
-    const destination = request.url.startsWith('/intelligence/') ? '/admin/intelligence' : request.url === '/shipping/evidence' ? '/admin/shipping' : request.url === '/cj/sync' ? '/admin/cj' : request.url === '/printify/sync' ? '/admin/printify' : request.url === '/suppliers/check' ? '/admin/suppliers' : request.url === '/dispatch/preview' ? '/admin/dispatch' : request.url === '/fulfillment/stage' ? '/admin/fulfillment' : request.url === '/shopify/catalog-sync' ? '/admin/shopify' : request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
+    const destination = ['/live/discover','/live/promote','/live/freight'].includes(request.url) ? '/admin/discovery' : ['/live/sales','/live/ads','/live/ad-map'].includes(request.url) ? '/admin/performance' : request.url.startsWith('/live/') ? '/admin/connections' : request.url.startsWith('/intelligence/') ? '/admin/intelligence' : request.url === '/shipping/evidence' ? '/admin/shipping' : request.url === '/cj/sync' ? '/admin/cj' : request.url === '/printify/sync' ? '/admin/printify' : request.url === '/suppliers/check' ? '/admin/suppliers' : request.url === '/dispatch/preview' ? '/admin/dispatch' : request.url === '/fulfillment/stage' ? '/admin/fulfillment' : request.url === '/shopify/catalog-sync' ? '/admin/shopify' : request.url === '/launch/scenario' ? '/admin/launch' : request.url.startsWith('/research/') ? '/admin/evidence' : ['/shopify/draft', '/store/listing'].includes(request.url) ? '/admin/engine'
       : ['/leads', '/catalog', '/orders', '/tracking'].includes(request.url) ? '/admin/supply' : '/admin';
     response.writeHead(303, { Location: destination });
     response.end();
@@ -693,4 +727,4 @@ createServer(async (request, response) => {
     response.statusCode = databaseError ? 500 : 400;
     response.end(databaseError ? 'Storage error.' : error.message);
   }
-}).listen(Number(process.env.PORT || 3000), host);
+}).listen(Number(process.env.PORT || 3000), host,()=>{console.log('TradeLens listening on http://'+host+':'+server.address().port);});

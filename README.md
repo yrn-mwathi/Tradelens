@@ -31,15 +31,15 @@ The existing merchant pages manage:
 
 | Provider | Current status | Required next step |
 | --- | --- | --- |
-| Shopify | Draft creation and paid-order webhook implemented; storefront can link to Shopify | Configure store credentials, permissions, product publication and fuller orders/refunds/fulfillment sync |
+| Shopify | Draft creation and paid-order webhook implemented; storefront can link to Shopify | Configure store credentials, permissions and product publication; live sales/refund snapshots are implemented, full accounting/fulfillment reconciliation remains |
 | Dropship.io | Research can be captured with evidence links | Obtain authorized research data access |
 | AutoDS | Provider records and mappings only | Confirm API entitlement, credentials and endpoint access |
-| Printify | Provider workspace only | Configure documented REST API + signed webhook handlers |
+| Printify | Official REST catalog snapshot and connection checks | Configure merchant token and test production/fulfillment workflow |
 | Zendrop | Provider workspace only | Complete supported Shopify app handoff |
 | SaleHoo | Supplier leads and notes | Verify supplier and app workflow |
 | Syncee | Provider mappings only | Verify permitted catalog access and Shopify handoff |
 | DSers | Supplier mapping only | Connect supported Shopify-to-AliExpress flow |
-| CJDropshipping | Provider mapping and manually entered tracking | Configure CJ API credentials, catalogue, inventory, shipping quotes and orders |
+| CJDropshipping | Official V2 catalog/discovery, freight quotation, mapping and manual tracking | Configure token, verify exact variants and perform real-account tests; order submission remains unimplemented |
 
 **Do not present placeholder data as sourced sales metrics or authentic merchandise.** No unattended scraping from reference websites or unauthorized APIs is included.
 
@@ -76,12 +76,26 @@ Do not publish a product unless the Shopify shop currency matches the candidate 
 
 ### Supplier connection health
 
-Set `PRINTIFY_API_TOKEN` and/or `CJ_ACCESS_TOKEN` in the server environment (never commit tokens). Open `/admin/suppliers` and click the corresponding read-only connection check. A successful check confirms the credential was accepted for the requested read operation; it does **not** verify order submission permissions, stock, shipping rates, or supplier fulfillment readiness. The CJ check uses the CJ product-list API endpoint and requires a valid CJ access token. Neither check places orders.
+Set `PRINTIFY_API_TOKEN` and/or `CJ_ACCESS_TOKEN` in the server environment (never commit tokens). Open `/admin/suppliers` and click the corresponding read-only connection check. A successful check confirms the credential was accepted for the requested read operation; it does **not** verify order submission permissions, stock, shipping rates, or supplier fulfillment readiness. The CJ check uses the CJ V2 product-list API endpoint and requires a valid CJ access token. Neither check places orders.
 
-## Winning Product Intelligence
+## Winning Product Intelligence and live workflows
 
-Open `/admin/intelligence`. The new workspace saves daily US/UK recommendation reports, source-linked observations, recorded performance feedback and persistent, acknowledgeable alerts. It shows up to 20 eligible candidates; it never invents products to fill the report. See [implementation and activation details](docs/PRODUCT_INTELLIGENCE.md).
+Quick start in Codespaces (Node 24+, no dependency installation):
 
-Optional AI briefings use the official OpenAI Responses API. Set `OPENAI_API_KEY` and `TRADELENS_AI_MODEL` to a model your API account supports. Click **Generate AI briefing for current report**. This sends the saved research report (including source links and aggregate performance, without customer/order details) to OpenAI. Results are cached once per report. Scores, approvals and validation stay deterministic/manual; model text is labeled unverified.
+```bash
+npm run setup
+npm start
+```
 
-This is **not yet unattended external product discovery**: research API account entitlements and credentials are not available in the repository. No live access or production supplier capability is claimed. Reports run on startup and every 24 hours while the server is running; sleeping hosts cannot produce reports. External email alerts and automatic advertising/store financial ingestion are not implemented.
+`setup` creates an ignored `.env` with a strong administrator password without overwriting existing configuration. Open private forwarded port 3000, then `/admin/connections`. Username: `admin`; password: your local `.env` value. For a synthetic preview that disables external calls, use `npm run demo`.
+
+New workspaces:
+
+- `/admin/connections`: credential readiness, durable job state, automation and email outbox.
+- `/admin/discovery`: official CJ V2 discovery inbox, review-to-candidate workflow and live US/UK freight quotations.
+- `/admin/performance`: Shopify sales/refund snapshots and Meta daily ad spend/product mappings.
+- `/admin/intelligence`: daily top-20 eligible recommendations, performance learning, source evidence, price scenarios, alerts and optional AI briefing.
+
+Configure provider credentials in host secrets or the ignored `.env`, following [live setup and acceptance checks](docs/LIVE_TESTING.md). Set `TRADELENS_AUTOMATION=1` for recurring provider jobs while the server stays awake. Set `TRADELENS_AUTO_AI=1` separately for scheduled paid AI. Physical testing requires explicit human attestation; draft imports never auto-publish.
+
+The core supported connectors are implemented but have not been tested against real merchant accounts here. Broader research-provider APIs remain gated by unverified access contracts; no universal live access, automated supplier ordering, guaranteed profit or delivery is claimed. See [exact implementation boundaries and formula](docs/PRODUCT_INTELLIGENCE.md).

@@ -20,12 +20,12 @@ const query = `query TradeLensCatalog($cursor: String) {
   }
  }
 }`;
-export async function syncShopifyCatalog(db,{shop,token}){
+export async function syncShopifyCatalog(db,{shop,token,fetcher=fetch}){
  if(!shop||!token)throw new Error('Configure Shopify store and Admin API token first.');
  if(!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop))throw new Error('Invalid Shopify shop domain.');
  const rows=[];let cursor=null;
  for(let page=0;page<5;page++){
-  const response=await fetch('https://'+shop+'/admin/api/2026-10/graphql.json',{
+  const response=await fetcher('https://'+shop+'/admin/api/2026-10/graphql.json',{
    method:'POST',redirect:'error',signal:AbortSignal.timeout(15000),
    headers:{'Content-Type':'application/json','X-Shopify-Access-Token':token},
    body:JSON.stringify({query,variables:{cursor}})

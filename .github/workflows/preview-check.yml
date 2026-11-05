@@ -15,6 +15,10 @@ jobs:
           node-version: '24'
       - name: Check module syntax
         run: |
+          node --check provider-http.mjs
+          node --check discovery.mjs
+          node --check store-performance.mjs
+          node --check automation.mjs
           node --check intelligence.mjs
           node --check commerce.mjs
           node --check evidence.mjs
@@ -58,3 +62,6 @@ jobs:
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/shipping | grep -q 'supplier shipping evidence'
 
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/intelligence | grep -q 'Winning Product Intelligence'
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/connections | grep -q 'Integration readiness'
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/discovery | grep -q 'Live product discovery'
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/performance | grep -q 'Live sales and advertising'

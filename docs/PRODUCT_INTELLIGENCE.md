@@ -1,62 +1,69 @@
-# Product Intelligence implementation and activation
+# Product Intelligence implementation
 
-Implemented 5 November 2026 against the existing TradeLens application. Existing storefront, manual approval, Shopify draft creation and supplier workflows are retained.
+Updated 5 November 2026. See [live setup and acceptance checks](LIVE_TESTING.md).
 
-## Available now
+## Implemented
 
-- `/admin/intelligence`: persisted top-20 eligible US/UK recommendation report, with fewer results when evidence is missing.
-- Scheduled daily local report calculation, plus an authenticated manual refresh. Reports use current local data; they do not silently call suppliers or scrape websites.
-- Traceable, timestamped manual source observations: relative search interest, supplier unit price, observed order volume, review rating and competition counts. Provenance is always labeled manual; source entry is not independent verification. Only relative search interest and supplier price observations currently trigger change alerts; other metrics support research review.
-- Explicit 0–100 rules-based ranking: demand 30%, supplier reliability 20%, low competition 15%, growth 10%, contribution margin 25%. Analyst inputs expire after 30 days; a 40% contribution margin saturates the profitability component. A high score does not constitute market validation.
-- Estimated contribution includes candidate supplier, shipping, merchant tax/duties, transaction fees, advertising and refund assumptions. It is not a promised net profit, automatic tax determination or FX conversion. Entered selling price is shown, not an AI-generated optimal price.
-- Source-linked aggregate store/ad performance batches with duplicate/overlap protection and currency validation. Inputs remain manually reported. At 20 recorded orders in periods ending within the preceding 90 days, recorded contribution margin replaces assumed margin. The window includes whole batches by end date; it does not prorate batches. Twenty orders is a configurable-in-code heuristic, not a statistical validation guarantee. Conversion, CAC and realized contribution are displayed. Nonpositive estimated or learned contribution excludes a candidate.
-- Persistent in-dashboard opportunity, demand increase (>20%), supplier price increase, assumed profit decline and realized-loss alerts. Duplicate identical messages are suppressed. Alerts need a previous report for comparisons. Supplier observations do not overwrite the pricing assumptions, since quotes can use different variants/destinations. Email/SMS/push delivery remains unconfigured.
-- Optional, manually triggered OpenAI briefing based only on saved report data. No research tools or browsing are granted. Text is unverified, escaped in HTML and unable to alter approvals, scores or physical-test badges. API errors do not break the deterministic report. One attempt per report avoids repeated charges; a failed attempt can be retried after a new report. Live API access has not been tested; mocked contract tests cover success/failure and caching.
-- Existing validation badges remain manual: Market Validated, Supplier Validated, Physically Tested. Only a named human reviewer can record physical testing through the existing form. No observation or AI output automatically assigns badges.
-
-## Authorized integration gates
-
-Public documentation establishes a supported integration path; it does not establish this merchant's entitlement, permissions or credential validity. Provider credentials are not committed or requested in chat.
-
-| Service | Existing implementation / permitted next step | Outstanding gate |
+| Area | Behavior | Data classification |
 | --- | --- | --- |
-| Shopify | GraphQL draft import, read-only catalog and signed paid-order webhook | Store token/scopes, real account acceptance tests, full refund/financial sync |
-| Printify | Existing REST catalog snapshot and read-only connection check | Merchant token, shipping/production/order permissions and end-to-end tests |
-| CJDropshipping | Existing catalog snapshot and health check | Token entitlement and migration of existing deprecated `/product/list` adapter to documented `/product/listV2` after response-contract verification |
-| DSers / AliExpress | Supported Shopify app workflow; supplier mapping already exists locally | Merchant installs/connects DSers; direct custom app requires developer approval and supplied contracts |
-| Google Trends | Official API remains access-gated alpha | Approved account/access details; relative interest must never be labeled sales volume |
-| Dropship.io | Source links/manual research only | Written API/data entitlement and actual documented contract |
-| Sell The Trend | Source links/manual research only | Written API/data entitlement and actual documented contract |
-| AutoDS | Local provider workspace and mappings | Confirm supported developer access and merchant entitlement |
-| Zendrop | Local provider workspace; supported app handoff to be configured | Merchant app authorization and documented access |
-| SaleHoo | Supplier lead records | Merchant access and permitted supplier-data workflow |
-| Syncee | Local provider mappings | Merchant authorization and permitted catalog/integration contract |
+| Discovery | Official CJ V2 keyword searches, deduplicated research inbox, product price history | API-reported catalog sample; not market sales |
+| Review | Exact variant and complete cost entry before unapproved candidate creation; reject products | Merchant-reviewed assumptions |
+| Supplier shipping | CJ one-unit freight quotes for US/GB with carrier estimates, USD costs and unknown tax markers | API-reported quotation, not guaranteed delivery or supplier verification |
+| Research | Source-linked demand, price, review and competitor observations; existing supplier reviews | Explicit manual provenance; CJ product prices retain API provenance |
+| Ranking | Daily saved reports, up to 20 eligible US/UK candidates, stale analyst exclusion | Rules-based decision support, not AI confidence |
+| Performance | Shopify sales/refund snapshots; Meta daily ad insights and product mappings | API-reported observations, separate from reconciled profit |
+| Learning | Fresh store traction adjusts demand/growth after 20 matched orders; accounting batches adjust margin after 20 recorded orders | Heuristics plus merchant accounting records; not statistical market validation |
+| AI | Bounded report briefing through OpenAI Responses API, cached once per report | Unverified generated interpretation; cannot change approvals or badges |
+| Alerts | Opportunity, price increase, demand increase, estimated profit decline and recorded loss; durable dashboard and email outbox | Evidence-based rule triggers; provider acceptance distinct from inbox delivery |
+| Automation | Per-job state, scheduling, 15-minute failure backoff, skipped credentials, cycle overlap protection | Credential presence never labeled as a verified connection |
+| Shopify handoff | Existing manual approval, draft import, catalog synchronization and signed paid-order webhook | Requires merchant authorization; no automatic publication |
 
-No unofficial endpoints or scraping are used. API keys alone cannot establish authorization to redistribute provider content.
+## Formula and evidence boundaries
 
-Official references checked for implementation planning:
+Demand 30%, supplier reliability 20%, low competition 15%, growth 10%, contribution margin 25%. Analyst inputs expire after 30 days. The profitability component saturates at a 40% contribution margin. Nonpositive assumed or learned contribution excludes a recommendation.
 
-- https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate
-- https://shopify.dev/docs/api/webhooks/latest
-- https://developers.printify.com/
+At 20 fresh API-reported store orders within the preceding 30 completed UTC dates, demand is `min(100, orders × 2.5) × remaining_units / original_units`. This is a store-traction heuristic, not overall market demand. When a preceding-week baseline exists, growth is `clamp(50 + 50 × (recent_week_orders - prior_week_orders) / prior_week_orders, 0, 100)`; otherwise the analyst growth input remains. Refunded/removed units reduce retained-unit traction. A stale sales snapshot (>24 hours) cannot adjust scores. Supplier reliability and competition still require real research, not fabricated API metrics.
+
+Manual source-linked accounting batches cannot overlap per candidate, have market-currency checks and require visits >= orders. At 20 recorded orders in batches ending within 90 days, recorded margin replaces assumed margin. Whole batches are included by end date. Recorded profit subtracts actual entered costs, ads and refunds once. The heuristic threshold does not establish statistical validity, and manually reported figures are never labeled independently audited.
+
+API merchandise revenue and ads remain separately visible. Conversion is calculated only from explicitly recorded visits and orders; clicks are never substituted for visits. No automatic currency conversion, universal tax/duties calculation, ad-attributed conversion inference, or complete actual-cost inference occurs.
+
+The dashboard also shows an illustrative 25% contribution-margin selling price and break-even acquisition cost using the fixed entered costs. The price is a scenario, not an optimized or market-supported selling price, and does not recalculate price-dependent fees/taxes.
+
+Physical validation always requires a named human reviewer, explicit real-sample confirmation and completed test date. No AI model or catalog import can award it. Market/Supplier Validated statuses document manual reviews, not third-party certification.
+
+## Automation and notifications
+
+Daily local reports run while the server is active. `TRADELENS_AUTOMATION=1` enables daily CJ discovery, hourly Shopify catalog/sales, six-hourly Meta insights, daily reports and 15-minute alert delivery checks. `TRADELENS_AUTO_AI=1` separately permits scheduled paid AI. Per-job errors do not erase prior snapshots or stop other jobs. No provider credentials exist in the checked-in code.
+
+Email batches contain up to 20 alerts to the configured administrator. Stable stored payloads and Resend idempotency keys protect short-term retries. An uncertain delivery older than 23 hours stops for provider-log review, avoiding retries outside the provider's 24-hour key window. Accepted does not mean delivered. Run one server instance with durable SQLite storage; host sleep pauses jobs.
+
+## Unsupported or unverified live access
+
+| Provider | Current boundary |
+| --- | --- |
+| Google Trends | Official alpha access not supplied; manual relative-interest evidence only |
+| Dropship.io / Sell The Trend | Authorized API/data contracts not supplied; source links and manual observations |
+| AutoDS / Zendrop / SaleHoo / Syncee | Existing local provider/lead/mapping workspaces; live partner/app access remains to be supplied |
+| DSers / AliExpress | Supported merchant Shopify app handoff; no custom API entitlement verified |
+| Printify | Existing official catalog and read-only health checks; production/order submission acceptance tests remain |
+
+These gates prevent claiming that the complete nine-service platform is live. Supplier quality/reliability, broad-market demand and physical product quality still require actual evidence. No unsupported endpoints or site scraping are used.
+
+## Primary references
+
 - https://developers.cjdropshipping.com/en/api/api2/api/product.html
-- https://www.dsers.dev/
-- https://www.dsers.com/en/integration/shopify-dropshipping-service
-- https://developers.google.com/search/apis/trends
+- https://developers.cjdropshipping.com/en/api/api2/api/logistic.html
+- https://shopify.dev/docs/api/admin-graphql/latest/queries/orders
+- https://shopify.dev/docs/api/admin-graphql/latest/objects/LineItem
+- https://developers.facebook.com/docs/marketing-api/insights/
+- https://www.postman.com/meta/facebook-marketing-api/request/u38qbri/get-insight-details-from-an-adaccount-l4
 - https://developers.openai.com/api/docs/guides/text
-
-## Activation
-
-Use Node 24+. Keep the existing database on durable storage and retain existing authentication/origin settings. New tables are added automatically at startup. Existing records are not overwritten.
-
-For optional AI, configure `OPENAI_API_KEY` and `TRADELENS_AI_MODEL` server-side. Generation is explicit per saved report; provider usage costs apply. Reports and original inputs remain usable with no AI credentials.
-
-Create candidates with US/USD or UK/GBP costs in Scout, enter recent analyst assessments, attach research sources, record any actual performance, and regenerate the report. Review evidence and physical samples before manually approving a product. Use Engine for Shopify draft import only after store authorization. No automated supplier purchases or automatic publication are introduced.
-
-## Still required for the complete requested platform
-
-Authorized live research connectors; scheduled provider catalog discovery with product deduplication and approval queues; independent supplier reliability/US-UK delivery verification; actual order/refund/advertising ingestion and reconciliation; optimal selling-price recommendations; external alert delivery; deployment and real-account integration tests. These cannot be called complete on the basis of local data entry or mocked tests.
+- https://resend.com/docs/api-reference/emails/send-email
+- https://resend.com/docs/dashboard/emails/idempotency-keys
+- https://www.dsers.dev/
+- https://developers.google.com/search/apis/trends
 
 ## Verification
 
-`node --test tests/*.test.mjs` covers fulfillment gates and intelligence ranking, provenance, alerts, mixed currencies, overlapping financial batches, loss exclusion, and the mocked Responses API contract. HTTP smoke testing covers the authenticated dashboard, source/performance forms and cross-origin rejection. No supplier order, live import, payment or paid AI request is placed by tests.
+`npm test` covers provider contracts, idempotency, source provenance, price histories, ranking feedback, currency rejection, stale data, atomic snapshot retention, alert retries, physical confirmation, real-mode signed webhook ingestion and protected HTTP routes. Live merchant calls, payment tests, browser visual checks and deployment acceptance remain pending account configuration.
