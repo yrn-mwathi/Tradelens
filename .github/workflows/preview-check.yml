@@ -15,6 +15,7 @@ jobs:
           node-version: '24'
       - name: Check module syntax
         run: |
+          node --check intelligence.mjs
           node --check commerce.mjs
           node --check evidence.mjs
           node --check launch.mjs
@@ -55,3 +56,5 @@ jobs:
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/printify | grep -q 'Printify catalog snapshot'
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/cj | grep -q 'CJ Dropshipping catalog'
           curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/shipping | grep -q 'supplier shipping evidence'
+
+          curl -fsS -u 'admin:a-long-strong-demo-only-password' http://127.0.0.1:3000/admin/intelligence | grep -q 'Winning Product Intelligence'

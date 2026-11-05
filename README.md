@@ -77,3 +77,11 @@ Do not publish a product unless the Shopify shop currency matches the candidate 
 ### Supplier connection health
 
 Set `PRINTIFY_API_TOKEN` and/or `CJ_ACCESS_TOKEN` in the server environment (never commit tokens). Open `/admin/suppliers` and click the corresponding read-only connection check. A successful check confirms the credential was accepted for the requested read operation; it does **not** verify order submission permissions, stock, shipping rates, or supplier fulfillment readiness. The CJ check uses the CJ product-list API endpoint and requires a valid CJ access token. Neither check places orders.
+
+## Winning Product Intelligence
+
+Open `/admin/intelligence`. The new workspace saves daily US/UK recommendation reports, source-linked observations, recorded performance feedback and persistent, acknowledgeable alerts. It shows up to 20 eligible candidates; it never invents products to fill the report. See [implementation and activation details](docs/PRODUCT_INTELLIGENCE.md).
+
+Optional AI briefings use the official OpenAI Responses API. Set `OPENAI_API_KEY` and `TRADELENS_AI_MODEL` to a model your API account supports. Click **Generate AI briefing for current report**. This sends the saved research report (including source links and aggregate performance, without customer/order details) to OpenAI. Results are cached once per report. Scores, approvals and validation stay deterministic/manual; model text is labeled unverified.
+
+This is **not yet unattended external product discovery**: research API account entitlements and credentials are not available in the repository. No live access or production supplier capability is claimed. Reports run on startup and every 24 hours while the server is running; sleeping hosts cannot produce reports. External email alerts and automatic advertising/store financial ingestion are not implemented.

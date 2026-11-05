@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {initializeIntelligence,saveIntelligence,buildRecommendations,runIntelligence,intelligenceWorkspace} from '../intelligence.mjs';
+function setup(){const db=new DatabaseSync(':memory:');db.exec(`PRAGMA foreign_keys=ON;
+ CREATE TABLE candidates(id TEXT PRIMARY KEY,name TEXT,market TEXT,source TEXT,revenue INTEGER,supplier INTEGER,shipping INTEGER,duties INTEGER,fees INTEGER,acquisition INTEGER,losses INTEGER);
+ CREATE TABLE scout_assessments(candidate_id TEXT,demand INTEGER,supplier INTEGER,competition INTEGER,growth INTEGER,recorded TEXT);
+ CREATE TABLE scout_validations(candidate_id TEXT,badge TEXT,reviewer TEXT,recorded TEXT);
+ INSERT INTO candidates VALUES('a','Desk hub','US','https://example.com',5000,1000,500,100,100,500,100);
+ INSERT INTO scout_assessments VALUES('a',90,90,90,90,'2026-11-01T00:00:00.000Z');`);initializeIntelligence(db);return db;}
+const now=new Date('2026-11-05T12:00:00Z');
+const form=o=>new URLSearchParams(o);
+const performance=(changes={})=>form({candidate_id:'a',batch_id:'report-1',period_start:'2026-11-01',period_end:'2026-11-04',currency:'USD',orders:'20',visits:'100',revenue:'100000',costs:'50000',ad_spend:'10000',refunds:'1000',source_url:'https://example.com/report',...changes});
+test('unknown and stale inputs do not produce invented recommendations',()=>{const db=setup();db.exec('DELETE FROM scout_assessments');assert.equal(buildRecommendations(db,now)[0].score,null);runIntelligence(db,now);assert.match(intelligenceWorkspace(db),/No eligible recommendations/);db.close();});
+test('fresh analyst scores bounded, report saved and alerts deduplicated',()=>{const db=setup();const r=runIntelligence(db,now)[0];assert.equal(r.eligible,true);assert.ok(r.score>=0&&r.score<=100);assert.match(r.basis,/Manual/);runIntelligence(db,now);assert.equal(db.prepare('SELECT count(*) n FROM intelligence_alerts').get().n,1);db.close();});
+test('actual performance changes margin after twenty orders; losses excluded',()=>{const db=setup();saveIntelligence(db,'/intelligence/performance',performance({ad_spend:'60000'}),now);const r=buildRecommendations(db,now)[0];assert.equal(r.performance.realizedProfit,-11000);assert.equal(r.eligible,false);assert.match(r.basis,/Recorded performance/);assert.equal(r.performance.conversion,0.2);assert.equal(r.performance.cac,3000);db.close();});
+test('overlapping batches, duplicate batch IDs, mixed currencies and invalid money rejected',()=>{const db=setup();saveIntelligence(db,'/intelligence/performance',performance(),now);assert.throws(()=>saveIntelligence(db,'/intelligence/performance',performance({batch_id:'other'}),now),/overlaps/);for(const changes of [{currency:'GBP'},{costs:'NaN'},{orders:'1.5'},{period_end:'2026-02-30'},{period_end:'2027-01-01'}])assert.throws(()=>saveIntelligence(db,'/intelligence/performance',performance(changes),now));db.close();});
+test('source signal provenance retained; dated demand rise and supplier price alerts',()=>{const db=setup();const signal=(metric,value,date)=>saveIntelligence(db,'/intelligence/signal',form({candidate_id:'a',metric,value,observed_at:date,source_url:'https://example.com/source'}),now);signal('search_interest','40','2026-11-02');signal('supplier_price','10','2026-11-02');runIntelligence(db,now);signal('search_interest','60','2026-11-04');signal('supplier_price','12','2026-11-04');runIntelligence(db,now);const kinds=db.prepare('SELECT kind FROM intelligence_alerts').all().map(x=>x.kind);assert.ok(kinds.includes('Demand increase'));assert.ok(kinds.includes('Supplier price change'));assert.equal(buildRecommendations(db,now)[0].signals[0].provenance,'manual source observation');assert.throws(()=>signal('search_interest','101','2026-11-04'));assert.throws(()=>signal('search_interest','30','2027-01-01'));db.close();});
+test('profit decline alert reports same-currency estimates',()=>{const db=setup();runIntelligence(db,now);db.exec('UPDATE candidates SET supplier=2000');runIntelligence(db,now);assert.ok(db.prepare("SELECT 1 FROM intelligence_alerts WHERE kind='Profit decline'").get());db.close();});
+
+test('AI briefing uses bounded report with no tools, caches responses, and hides provider errors',async()=>{
+ const {generateBriefing}=await import('../intelligence.mjs');const db=setup();runIntelligence(db,now);let calls=0;
+ const options={key:'test-only-key',model:'configured-model',fetcher:async(url,opts)=>{calls++;assert.equal(url,'https://api.openai.com/v1/responses');const payload=JSON.parse(opts.body);assert.equal(payload.store,false);assert.equal(payload.tools,undefined);assert.match(payload.input,/Manual cost assumptions/);return {ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'Review candidate a. No verified market demand.'}]}]})};}};
+ await generateBriefing(db,options);await generateBriefing(db,options);assert.equal(calls,1);assert.equal(db.prepare('SELECT status FROM intelligence_briefings').get().status,'completed');
+ runIntelligence(db,now);await generateBriefing(db,{...options,fetcher:async()=>{throw new Error('sensitive provider response');}});assert.match(db.prepare('SELECT body FROM intelligence_briefings ORDER BY rowid DESC LIMIT 1').get().body,/Briefing unavailable/);db.close();
+});
